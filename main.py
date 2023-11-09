@@ -15,6 +15,7 @@ class Circle:
 		self.shape = pymunk.Circle(self.body, r)
 		self.shape.mass = m
 		self.shape.friction = 1
+		self.shape.elasticity = 0.7
 		self.space.add(self.body, self.shape)
 		
 	def set_pos(self, x, y):
@@ -28,6 +29,27 @@ class Circle:
 	def draw(self, screen):
 		pos = self.get_pos()
 		pygame.draw.circle(screen, (0,0,255), (int(pxPerM*pos.x), int(pxPerM*pos.y)), int(pxPerM*self.get_r()))
+class Ground:
+	def __init__(self, space, pnts, thick=0.05):
+		self.space = space
+		
+		self.segments = [ pymunk.Segment(space.static_body, pnts[i], pnts[i-1], thick) for i in range(1,len(pnts)) ]
+		for seg in self.segments:
+			seg.elasticity = 0.7 
+			seg.friction = 1
+		
+		# for the graphics
+		self.pnts = [(int(pxPerM*pnt[0]),int(pxPerM*pnt[1])) for pnt in pnts]
+		self.thick = thick
+		
+		self.space.add(*self.segments)
+	
+	def draw(self, screen):
+		pygame.draw.lines(screen, "red", False, self.pnts, int(pxPerM*self.thick*2))
+		for pnt in self.pnts : pygame.draw.circle(screen, "red", pnt, int(pxPerM*self.thick))
+class Prop:
+	def __init__():
+		pass
 
 fps = 60
 def main():
@@ -39,7 +61,11 @@ def main():
 	space = pymunk.Space()
 	space.gravity = (0.0, 9.81)
 	
-	objects = [ Circle(space, 0.1, 0.2).set_pos(1, 0.1) ]
+	objects = [
+		Circle(space, 0.1, 0.2).set_pos(1, 0.1),
+		Circle(space, 0.1, 0.2).set_pos(4, 0.1),
+		Ground(space, [(0,3),(2,3), (4,4), (5,4)])
+	]
 	
 	while True:
 		for event in pygame.event.get():
