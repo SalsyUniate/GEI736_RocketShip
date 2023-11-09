@@ -6,7 +6,13 @@ import sys
 
 pxPerM = 100; # px/m
 
-class Circle:
+class Object:
+	def set_pos(self, x, y):
+		self.body.position = x, y;
+		return self
+	def get_pos(self):
+		return self.body.position;
+class Circle(Object):
 	def __init__(self, space, r, m):
 		self.space = space
 		
@@ -18,17 +24,34 @@ class Circle:
 		self.shape.elasticity = 0.7
 		self.space.add(self.body, self.shape)
 		
-	def set_pos(self, x, y):
-		self.body.position = x, y;
-		return self
-	def get_pos(self):
-		return self.body.position;
 	def get_r(self):
 		return self.shape.radius
 	
 	def draw(self, screen):
 		pos = self.get_pos()
-		pygame.draw.circle(screen, (0,0,255), (int(pxPerM*pos.x), int(pxPerM*pos.y)), int(pxPerM*self.get_r()))
+		pygame.draw.circle(screen, "blue", (int(pxPerM*pos.x), int(pxPerM*pos.y)), int(pxPerM*self.get_r()))
+class Poly(Object):
+	def __init__(self, space, pnts, m):
+		self.space = space
+		self.body = pymunk.Body()
+		
+		self.shape = pymunk.Poly(self.body, pnts)
+		self.shape.mass = m
+		self.shape.friction = 1
+		self.shape.elasticity = 0.7
+		
+		self.space.add(self.body, self.shape)
+	
+	def draw(self, screen):
+		pnts = []
+		for v in self.shape.get_vertices():
+			pos = v.rotated(self.shape.body.angle) + self.shape.body.position
+			pnts.append((int(pxPerM*pos.x),int(pxPerM*pos.y)))
+		pygame.draw.polygon(screen, "blue", pnts)
+class Rect(Poly):
+	def __init__(self, space, w,h, m):
+		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
+		Poly.__init__(self, space, pnts, m)
 class Ground:
 	def __init__(self, space, pnts, thick=0.05):
 		self.space = space
@@ -47,8 +70,8 @@ class Ground:
 	def draw(self, screen):
 		pygame.draw.lines(screen, "red", False, self.pnts, int(pxPerM*self.thick*2))
 		for pnt in self.pnts : pygame.draw.circle(screen, "red", pnt, int(pxPerM*self.thick))
-class Prop:
-	def __init__():
+class Rocket(Object):
+	def __init__(self, h,w, px, py):
 		pass
 
 fps = 60
@@ -63,7 +86,7 @@ def main():
 	
 	objects = [
 		Circle(space, 0.1, 0.2).set_pos(1, 0.1),
-		Circle(space, 0.1, 0.2).set_pos(4, 0.1),
+		Rect(space, 0.4, 0.2, 0.3).set_pos(4, 0.1),
 		Ground(space, [(0,3),(2,3), (4,4), (5,4)])
 	]
 	
