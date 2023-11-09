@@ -71,8 +71,10 @@ class Ground:
 		pygame.draw.lines(screen, "red", False, self.pnts, int(pxPerM*self.thick*2))
 		for pnt in self.pnts : pygame.draw.circle(screen, "red", pnt, int(pxPerM*self.thick))
 class Rocket(Object):
-	def __init__(self, h,w, px, py):
-		pass
+	def __init__(self, space, w,h, px, py, angle):
+		self.hull = Rect(space, w,h, 10)
+		self.props = [Rect(space, w/3,h/4, 1), Rect(space, w/3,h/4, 1)]
+		
 
 fps = 60
 def main():
