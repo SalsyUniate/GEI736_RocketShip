@@ -1,8 +1,18 @@
-# Example file showing a circle moving on screen
-import numpy as np
+import pymunk
+from pymunk.vec2d import Vec2d
 import pygame
+import numpy as np
+
+import sys
+import math
+pi = math.pi
+from copy import deepcopy as dcp
+import random
 
 import fuzzy as fz
+import simulation as sim
+
+pxPerM = 100 # px/m
 
 def init_fuzzy():
     x_rules_gauche = [
@@ -159,50 +169,101 @@ def init_fuzzy():
         'fz_sys_droit' : fz_sys_droit
     }
 
-# pygame setupfg
-pygame.init()
-screen = pygame.display.set_mode((1280, 720))
-clock = pygame.time.Clock()
-running = True
-dt = 0
+def main():
+	space = pymunk.Space()
+	space.gravity = (0.0, 9.81)
+	
+	rocket = sim.Rocket(space, 0.5, 1).set_pos(Vec2d(2,0.1))
+	target = sim.Target(Vec2d(0,0))
+	objects = [
+		sim.Ground(space, [(-1,8),(8,8)]),
+		rocket,
+		target
+	]
+	
+	mode = 'normal'
+	if mode == 'training':
+		
+		rocketposRangeX = (0, 8) ; rocketposRangeY = (0, 3)
+		targetRangeX = (0, 8) ; targetRangeY = (0, 3)
+		
+		def fitness(sys):
+			target.pos = Vec2d(random.uniform(*targetRangeX), random.uniform(*targetRangeY))
+			rocket.set_pos(Vec2d(random.uniform(*rocketposRangeX), random.uniform(*rocketposRangeY)))
+			rocket.set_angle(0)
+			rocket.set_linvel(Vec2d(0,0))
+			rocket.set_rotvel(0)
+			
+			t = 0
+			while t <= 8:
+				# fuzzy control
+				err = target.pos - rocket.get_pos() ; vel = rocket.get_linvel()
+				f = sys.compute({
+					'errx': err.x, 'erry': err.y,
+					'velx': vel.x, 'vely': vel.y,
+					'angle': rocket.get_angle(), 'velangle': rocket.get_rotvel()
+				})
+				rocket.apply_force(f['fl'], f['fr'])
+				
+				space.step(1/20)
+				
+				t += dt
+			
+			return 1/(1+(err**2 + vel**2)) *20
+		
+		insets = [
+			fz.SetGauss(0,1, -5,5,       tag='errx'),
+			fz.SetGauss(0,1, -5,5,       tag='velx'),
+			fz.SetGauss(0,1, -10,5,      tag='erry'),
+			fz.SetGauss(0,1, -5,5,       tag='vely'),
+			fz.SetGauss(0,1, 0,2*pi,     tag='angle'),
+			fz.SetGauss(0,1, -8*pi,8*pi, tag='velangle')
+		]
+		outsets = [
+			fz.SetGauss(0,1, 0,10000, tag='fl'),
+			fz.SetGauss(0,1, 0,10000, tag='fr')
+		]
+		nbrules = 100
+		rules = [ fz.Rule(fz.Cond(fz.AND(*[dcp(fin) for fin in insets])), dcp(fout)) for i in range(nbrules) for fout in outsets]
+		
+		pop = fz.Population(rules)
+		pop.init(1000)
+		pop.evolve(fitness, 100)
+		
+	else:
+		
+		pygame.init()
+		ws = (1000, 600)
+		screen = pygame.display.set_mode(ws)
+		pygame.display.set_caption("Rocket control")
+		clock = pygame.time.Clock()
+		keysdown = {}
+		fps = 60
+		
+		while True:
+			for event in pygame.event.get():
+				if event.type == pygame.QUIT : sys.exit(0)
+			
+			keys = pygame.key.get_pressed()
+			if keys[pygame.K_ESCAPE] : sys.exit(0)
+			if keys[pygame.K_LEFT]   : rocket.apply_force(100,0)
+			if keys[pygame.K_RIGHT]  : rocket.apply_force(0,100)
+			if keys[pygame.K_r]: # reset rocket
+				rocket.set_pos(Vec2d(4,0))
+				rocket.set_angle(0)
+				rocket.set_linvel(Vec2d(0,0))
+				rocket.set_rotvel(0) 
+			
+			screen.fill((255,255,255))
+		
+			space.step(1/fps)
+			
+			rocketpos = rocket.get_pos()
+			offset = (ws[0]/2 - int(rocketpos.x*pxPerM), ws[1]/2 - int(rocketpos.y*pxPerM))
+			for obj in objects : obj.draw(screen, offset)
+		
+			pygame.display.flip()
+			clock.tick(fps)
 
-systemes = init_fuzzy()
-
-player_pos = pygame.Vector2(screen.get_width() / 2, screen.get_height() / 2)
-player_angle = np.pi/2
-
-while running:
-    # poll for events
-    # pygame.QUIT event means the user clicked X to close your window
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-
-    # fill the screen with a color to wipe away anything from last frame
-    screen.fill("black")
-
-    pygame.draw.circle(screen, "white", player_pos, 40)
-    pygame.draw.circle(screen, "WHITE",pygame.Vector2(player_pos.x -30, player_pos.y +30),30)
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_f]:
-        player_pos.y += np.sin(player_angle + 3*np.pi/4)* 200 * dt
-        player_pos.x += np.cos(player_angle+ 3*np.pi/4)* 200 * dt
-        player_angle += np.pi/16 * dt
-        pygame.draw.circle(screen, "red", pygame.Vector2(player_pos.x -30, player_pos.y +30), 10)
-    if keys[pygame.K_g]:
-        player_pos.y += np.sin(player_angle + 5*np.pi/4)* 200 * dt
-        player_pos.x += np.cos(player_angle+ 5*np.pi/4)* 200 * dt
-        player_angle -= np.pi/16 * dt
-        pygame.draw.circle(screen, "red",pygame.Vector2(player_pos.x +30, player_pos.y +30) , 10)
-        
-    player_pos.y += 100 * dt
-
-    # flip() the display to put your work on screen
-    pygame.display.flip()
-
-    # limits FPS to 60
-    # dt is delta time in seconds since last frame, used for framerate-
-    # independent physics.
-    dt = clock.tick(60) / 1000
-
-pygame.quit()
+if __name__ == '__main__':
+    sys.exit(main())
