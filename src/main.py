@@ -155,8 +155,8 @@ def init_fuzzy():
         'fz_sys_y_droit' : fz_sys_y_droit,
         'fz_sys_xtheta_gauche' : fz_sys_xtheta_gauche,
         'fz_sys_xtheta_droit' : fz_sys_xtheta_droit,
-        'fz_sys_gauche' : fz_sys_xtheta_gauche,
-        'fz_sys_droit' : fz_sys_xtheta_droit
+        'fz_sys_gauche' : fz_sys_gauche,
+        'fz_sys_droit' : fz_sys_droit
     }
 
 # pygame setupfg
