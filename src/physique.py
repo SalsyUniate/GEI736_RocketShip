@@ -3,6 +3,7 @@ from pymunk.vec2d import Vec2d
 import numpy as np
 pi = np.pi
 import pygame
+import pygame.gfxdraw
 
 import sys
 
@@ -34,12 +35,12 @@ class PolyShape(Shape):
 		
 		space.add(self.shape)
 	
-	def draw(self, screen, offset,color = "blue"):
+	def draw(self, screen, offset,sprite):
 		pnts = []
 		for v in self.shape.get_vertices():
 			pos = v.rotated(self.shape.body.angle) + self.shape.body.position
 			pnts.append((int(pxPerM*pos.x)+offset[0],int(pxPerM*pos.y)+offset[1]))
-		pygame.draw.polygon(screen, color, pnts)
+		pygame.draw.polygon(screen, sprite, pnts)
 class RectShape(PolyShape):
 	def __init__(self, space,body, w,h, m):
 		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
@@ -78,6 +79,7 @@ class Rocket:
 		
 		self.forcepos = [(-0.25, 0.5),(0.25, 0.5)]
 		self.forceangle = [11*pi/8, 13*pi/8]
+		self.sprites = (pygame.PixelArray(pygame.image.load("img/rocket_core.png")),pygame.PixelArray(pygame.image.load("img/booster_off.png")),pygame.PixelArray(pygame.image.load("img/booster_on.png")))
 		
 		self.props[0].shape.unsafe_set_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.rotation(pi/2 + self.forceangle[1]))
 		self.props[0].shape.unsafe_set_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.translation(*self.forcepos[0]))
@@ -116,12 +118,12 @@ class Rocket:
 		return self
 	
 	def draw(self, screen, offset):
-		self.hull.draw(screen,offset)
+		self.hull.draw(screen,offset,self.sprites[0])
 		for i in range(len(self.props)) : 
 			if self.propsvisibility[i] :
-				self.props[i].draw(screen,offset,"red")
+				self.props[i].draw(screen,offset,self.sprites[2])
 			else:
-				self.props[i].draw(screen,offset)
+				self.props[i].draw(screen,offset,self.sprites[1])
 class Target:
 	def __init__(self, pos):
 		self.pos = pos
@@ -139,6 +141,7 @@ def main():
 	screen = pygame.display.set_mode(windowSize)
 	pygame.display.set_caption("Rocket control")
 	clock = pygame.time.Clock()
+	
 	
 	space = pymunk.Space()
 	space.gravity = (0.0, 9.81)
