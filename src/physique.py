@@ -79,8 +79,10 @@ class Rocket:
 		self.forcepos = [(-0.25, 0.5),(0.25, 0.5)]
 		self.forceangle = [11*pi/8, 13*pi/8]
 		
-		self.props[0].shape.unsafe_set_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.rotation(self.forceangle[0]).translation(*self.forcepos[0]))
-		self.props[1].shape.unsafe_set_vertices(self.props[1].shape.get_vertices(),pymunk.Transform.rotation(self.forceangle[1]).translation(*self.forcepos[1]))
+		self.props[0].shape.unsafe_set_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.rotation(pi/2 + self.forceangle[1]))
+		self.props[0].shape.unsafe_set_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.translation(*self.forcepos[0]))
+		self.props[1].shape.unsafe_set_vertices(self.props[1].shape.get_vertices(),pymunk.Transform.rotation(pi/2 + self.forceangle[0]))
+		self.props[1].shape.unsafe_set_vertices(self.props[1].shape.get_vertices(),pymunk.Transform.translation(*self.forcepos[1]))
   
 		self.propsvisibility = [False, False]
 	
