@@ -93,6 +93,12 @@ class SetGauss(Set):
 	@staticmethod
 	def autoN(n, w1,w2, std, sat, *args,**kwargs):
 		return [SetGauss( w1+i*(w2-w1)/(n-1), std, w1,w2, sat=([i==0,i==n-1] if sat else [False,False]), *args,**kwargs ) for i in range(n)]
+	@staticmethod
+	def autoN_cn(n, sat, *args,**kwargs): # centered 0, normalized autoN
+		return SetGauss.autoN(n, -1,1, 1/n, sat, *args,**kwargs)
+	@staticmethod
+	def autoN_ln(n, sat, *args,**kwargs): # left 0, normalized autoN
+		return SetGauss.autoN(n, 0,1, 0.5/n, sat, *args,**kwargs)
 
 # fuzzy conditions
 class Cond:

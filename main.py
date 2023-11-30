@@ -17,11 +17,9 @@ import fuzzy as fz
 
 ws = (1000, 600) # screen dimensions in pixels
 pxPerM = 100 # px/m
-screen_center = Vec2d(ws[0]/2/pxPerM, -ws[1]/2/pxPerM) # screen center in physics coordinates
-cam_t = Transform() # camera transform (zoom & translation)
 def coord_phys2screen(coord, transfo): # transform physics coordinates to screen coordintaes
 	tmp = transfo @ coord
-	return (int(tmp[0]*pxPerM), -int(tmp[1]*pxPerM))
+	return (int(tmp[0]), -int(tmp[1]))
 
 class Shape:
 	def set_pos(self, pos):
@@ -157,12 +155,14 @@ class Target:
 		pygame.draw.circle(screen, "red", coord_phys2screen(self.pos,transfo), 10)
 
 def main_manual():
+	global pxPerM
+	
 	space = pymunk.Space()
 	space.gravity = (0.0, -9.81)
 	
 	rocket = Rocket(space, 0.5, 1).set_pos(Vec2d(5,5))
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
-	target = Target(Vec2d(10,11))
+	target = Target(Vec2d(18,11))
 	objects = [
 		Ground(space, [(0,0),(20,0),(20,20),(0,20),(0,0)]),
 		rocket,
@@ -211,6 +211,12 @@ def main_manual():
 	clock = pygame.time.Clock()
 	keysdown = {}
 	fps = 60
+	
+	mms = (ws[0]/5, ws[1]/5)
+	mm_center = (-5,10)
+	mmdots = 5 # minimap dot size
+	minimap = pygame.Surface(mms)
+	minimap.set_alpha(128)
 	while True:
 		# user events
 		for event in pygame.event.get():
@@ -220,6 +226,8 @@ def main_manual():
 			elif event.type == pygame.KEYDOWN:
 				if event.key == pygame.K_r   : rocket.set_pos(Vec2d(5,5)).stop() # reset rocket
 				elif event.key == pygame.K_a : autoOn = not autoOn # toggle auto control
+				elif event.key == pygame.K_i : pxPerM *= 120/100 # zoom in
+				elif event.key == pygame.K_o : pxPerM *= 80/100 # zoom out
 		# get key downs (repeats)
 		keys = pygame.key.get_pressed()
 		if keys[pygame.K_ESCAPE] : sys.exit(0)
@@ -237,37 +245,39 @@ def main_manual():
 		if autoOn:
 			err = rpos - target.pos
 			vel = rocket.get_linvel()
-			fx = sys1.compute({'errx': err.x/5, 'velx': vel.x/10}, 'fx')
-			fy = sys2.compute({'erry': err.y/1, 'vely': vel.y/10}, 'fy')
+			fx = sys1.compute({'errx': err.x/5, 'velx': vel.x/5}, 'fx')
+			fy = sys2.compute({'erry': err.y/1, 'vely': vel.y/5}, 'fy')
 			
 			fa = math.atan2(abs(fy),fx)
-			
 			erra = rangle - fa
 			if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
-			r1 = sys3.compute({'erra': erra/pi*2, 'vela': rocket.get_rotvel()/pi/4}) # rotate towards force
+			r1 = sys3.compute({'erra': erra/pi*4, 'vela': rocket.get_rotvel()/pi/1}) # rotate towards angle
 			
-			ftmp = Vec2d(fx, max(0,fy))
-			f = Vec2d(1,1)*ftmp.length*120 + Vec2d(r1['fl'], r1['fr'])*400
+			f1 = Vec2d(fx, fy) # force to target
+			f2 = Vec2d(cos(rangle), sin(rangle)) # rocket dir
+			thrust = max(0, f1.dot(f2)) * 200
+			
+			f = Vec2d(1,1)*thrust + Vec2d(r1['fl'], r1['fr'])*200
 			rocket.apply_force(f.x, f.y)
-			
-			#fa = math.atan2(fy,fx)
-			#erra = rangle - fa
-			#if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
-			#r1 = sys3.compute({'erra': erra/pi*2, 'vela': rocket.get_rotvel()/pi/4}) # rotate towards force
-			#
-			#f = Vec2d(r1['fl']+1, r1['fr']+1) * 200
-			#rocket.apply_force(f.x, f.y)
 		
 		# graphics
 		screen.fill((255,255,255))
 		
+		screen_center = Vec2d(ws[0]/2/pxPerM, -ws[1]/2/pxPerM) # screen center in physics coordinates
 		off = rpos - screen_center
-		cam_t = Transform.translation(-off.x, -off.y)
+		cam_t = Transform.scaling(pxPerM).translated(-off.x, -off.y)
 		
 		for obj in objects : obj.draw(screen, cam_t)
 		if autoOn:
-			pass
-			#rocket.draw_arrow(screen,cam_t, Vec2d(fx,abs(fy)), 'green')
+			rocket.draw_arrow(screen,cam_t, Vec2d(fx,fy),'green')
+		
+		# minimap
+		mm_off = rpos - mm_center
+		mm_t = Transform.scaling(pxPerM/20).translated(-mm_off.x, -mm_off.y)
+		minimap.fill((128,128,128))
+		pygame.draw.circle(minimap, "red", coord_phys2screen(rpos,mm_t), mmdots)
+		pygame.draw.circle(minimap, "green", coord_phys2screen(target.pos,mm_t), mmdots)
+		screen.blit(minimap, (10,ws[1]-(mms[1]+10))) 
 		
 		pygame.display.flip()
 		clock.tick(fps)
