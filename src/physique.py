@@ -34,12 +34,12 @@ class PolyShape(Shape):
 		
 		space.add(self.shape)
 	
-	def draw(self, screen, offset):
+	def draw(self, screen, offset,color = "blue"):
 		pnts = []
 		for v in self.shape.get_vertices():
 			pos = v.rotated(self.shape.body.angle) + self.shape.body.position
 			pnts.append((int(pxPerM*pos.x)+offset[0],int(pxPerM*pos.y)+offset[1]))
-		pygame.draw.polygon(screen, "blue", pnts)
+		pygame.draw.polygon(screen, color, pnts)
 class RectShape(PolyShape):
 	def __init__(self, space,body, w,h, m):
 		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
@@ -74,13 +74,13 @@ class Rocket:
 		space.add(self.body)
 		
 		self.hull = PolyShape(space,self.body, [(-0.25,0.),(-0.1875,-0.25),(0.,-0.5),(0.1875,-0.25),(0.25,0.),(0.25,0.5),(-0.25,0.5)], 10)
-		self.props = [PolyShape(space,self.body, [(-0.125,-0.0625),(-0.0625,-0.125),(0.0625,-0.125),(0.125,-0.0625),(0.0625,0.125),(-0.0625,0.125)], 1), CircleShape(space,self.body, w/4, 1)]
+		self.props = [PolyShape(space,self.body, [(-0.125,-0.0625),(-0.0625,-0.125),(0.0625,-0.125),(0.125,-0.0625),(0.0625,0.125),(-0.0625,0.125)], 1), PolyShape(space,self.body, [(-0.125,-0.0625),(-0.0625,-0.125),(0.0625,-0.125),(0.125,-0.0625),(0.0625,0.125),(-0.0625,0.125)], 1)]
 		
 		self.forcepos = [(-0.25, 0.5),(0.25, 0.5)]
 		self.forceangle = [11*pi/8, 13*pi/8]
 		
-		self.props[0].shape.set_unsafe_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.rotation(self.forceangle[0]).translation(*self.forcepos[0]))
-		self.props[1].shape.set_unsafe_vertices(self.props[1].shape.get_vertices(),pymunk.Transform.rotation(self.forceangle[1]).translation(*self.forcepos[1]))
+		self.props[0].shape.unsafe_set_vertices(self.props[0].shape.get_vertices(),pymunk.Transform.rotation(self.forceangle[0]).translation(*self.forcepos[0]))
+		self.props[1].shape.unsafe_set_vertices(self.props[1].shape.get_vertices(),pymunk.Transform.rotation(self.forceangle[1]).translation(*self.forcepos[1]))
   
 		self.propsvisibility = [False, False]
 	
