@@ -130,6 +130,7 @@ class Rocket:
 		self.body.apply_force_at_local_point(Vec2d(rot/2,0), Vec2d(0, -1))
 		self.body.apply_force_at_local_point(Vec2d(-rot/2,0), Vec2d(0, 1))
 	def apply_force(self, l, r):
+		l = max(0,l) ; r = max(0,r) # only positive forces
 		self.body.apply_force_at_local_point( (cos(self.forceangle[0])*l, sin(self.forceangle[0])*l), self.forcepos[0] )
 		self.body.apply_force_at_local_point( (cos(self.forceangle[1])*r, sin(self.forceangle[1])*r), self.forcepos[1] )
 		return self
@@ -160,7 +161,7 @@ def main_manual():
 	space.gravity = (0.0, -9.81)
 	
 	rocket = Rocket(space, 0.5, 1).set_pos(Vec2d(5,5))
-	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j)
+	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
 	target = Target(Vec2d(10,11))
 	objects = [
 		Ground(space, [(0,0),(20,0),(20,20),(0,20),(0,0)]),
@@ -169,73 +170,38 @@ def main_manual():
 	]
 	
 	# Fuzzy systems ------------------------------------------------------------------------------------------
-	NEG=0 ; ZERO=1 ; POS=2
+	autoOn = False
+	nbsets = 5 # impaire
+	mset = nbsets//2 # index of middle set
 	# system (1) :: X -> force X
-	fsets_errx = fz.SetGauss.autoN(3, -1,1, 1, True, tag='errx')
-	fsets_velx = fz.SetGauss.autoN(3, -5,5, 2, True, tag='velx')
-	fsets_fx = fz.SetGauss.autoN(  3, -1,1, 1, False, tag='fx') # output x-force
-	rulemap1 = [
-		# err & vel -> f
-		(ZERO, ZERO, ZERO),
-		(NEG,  POS,  ZERO),
-		(POS,  NEG,  ZERO),
-		
-		(NEG, ZERO, POS),
-		(NEG, NEG,  POS),
-		(ZERO, NEG, POS),
-		
-		(POS,  ZERO, NEG),
-		(POS,  POS,  NEG),
-		(ZERO, POS,  NEG),
-	]
-	rules1 = [fz.Rule(fz.AND(fsets_errx[err], fsets_velx[vel]), fsets_fx[f]) for err,vel,f in rulemap1]
+	fsets_errx = fz.SetGauss.autoN_cn(nbsets, True, tag='errx')
+	fsets_velx = fz.SetGauss.autoN_cn(nbsets, True, tag='velx')
+	fsets_fx = fz.SetGauss.autoN_cn(  nbsets, False, tag='fx') # output x-force
+	rules1 = [fz.Rule(fz.AND(fsets_errx[i], fsets_velx[n]), fsets_fx[fz.clamp(0, -(i-mset+n-mset) + mset, nbsets-1)]) for i in range(nbsets) for n in range(nbsets)]
 	sys1 = fz.System(rules1)
+	#fz.Set.plotAll(fsets_errx) ; fz.Set.plotAll(fsets_velx) ; fz.Set.plotAll(fsets_fx) ; plt.show()
 	# system (2) :: Y -> force Y
-	fsets_erry = fz.SetGauss.autoN(3, -1,1, 1, True, tag='erry')
-	fsets_vely = fz.SetGauss.autoN(3, -5,5, 2, True, tag='vely')
-	fsets_fy = fz.SetGauss.autoN(  3, -1,1, 1, False, tag='fy') # output y-force
-	rulemap2 = [
-		# err & vel -> f
-		(ZERO, ZERO, ZERO),
-		(NEG,  POS,  ZERO),
-		(POS,  NEG,  ZERO),
-		(POS,  ZERO, ZERO),
-		
-		(POS,  POS,  NEG),
-		(ZERO, POS,  NEG),
-		
-		(NEG, ZERO, POS),
-		(NEG, NEG,  POS),
-		(ZERO, NEG, POS),
-	]
-	rules2 = [fz.Rule(fz.AND(fsets_erry[err], fsets_vely[vel]), fsets_fy[f]) for err,vel,f in rulemap2]
+	fsets_erry = fz.SetGauss.autoN_cn(nbsets, True, tag='erry')
+	fsets_vely = fz.SetGauss.autoN_cn(nbsets, True, tag='vely')
+	fsets_fy = fz.SetGauss.autoN_cn(  nbsets, False, tag='fy') # output y-force
+	rules2 = [fz.Rule(fz.AND(fsets_erry[i], fsets_vely[n]), fsets_fy[fz.clamp(0, -(i-mset+n-mset) + mset, nbsets-1)]) for i in range(nbsets) for n in range(nbsets)]
 	sys2 = fz.System(rules2)
-	# system (3) :: Angle -> thrust L & R
-	LOW=0 ; MID=1 ; HIGH=2
-	fsets_erra = fz.SetGauss.autoN(3, -pi/2,pi/2, pi/3, True, tag='erra')
-	fsets_vela = fz.SetGauss.autoN(3, -5,5, 10/3, True, tag='vela')
-	fsets_fl = fz.SetGauss.autoN(3, 0,1, 0.5, False, tag='fl')
-	fsets_fr = fz.SetGauss.autoN(3, 0,1, 0.5, False, tag='fr')
-	rulemap3 = [
-		# angle & velangle -> fr, fl
-		# POS is positive error (left of target)
-		(ZERO, ZERO, LOW, LOW),
-		
-		(POS, ZERO, MID, LOW),
-		(POS, NEG, LOW, LOW),
-		(POS, POS, HIGH, LOW),
-		
-		(NEG, ZERO, LOW, MID),
-		(NEG, POS, LOW, LOW),
-		(NEG, NEG, LOW, HIGH),
-		
-		(ZERO, NEG, LOW, MID),
-		(ZERO, POS, MID, LOW),
-	]
-	rules3 = [
-		*[fz.Rule(fz.AND(fsets_erra[err], fsets_vela[vel]), fsets_fr[fr]) for err,vel,fl,fr in rulemap3],
-		*[fz.Rule(fz.AND(fsets_erra[err], fsets_vela[vel]), fsets_fl[fl]) for err,vel,fl,fr in rulemap3],
-	]
+	#fz.Set.plotAll(fsets_erry) ; fz.Set.plotAll(fsets_vely) ; fz.Set.plotAll(fsets_fy) ; plt.show()
+	# system (3) :: Angle -> increment thrust L & R
+	fsets_erra = fz.SetGauss.autoN_cn(nbsets, True, tag='erra')
+	fsets_vela = fz.SetGauss.autoN_cn(nbsets, True, tag='vela')
+	fsets_fl = fz.SetGauss.autoN_cn(nbsets, False, tag='fl')
+	fsets_fr = fz.SetGauss.autoN_cn(nbsets, False, tag='fr')
+	rules3 = []
+	for i in range(nbsets):
+		for n in range(nbsets) :
+			val = i-mset+n-mset
+			indL = fz.clamp(0, val + mset, nbsets-1)
+			indR = fz.clamp(0, -val + mset, nbsets-1)
+			rules3 += [
+				fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fl[indL]),
+				fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fr[indR])
+			]
 	sys3 = fz.System(rules3)
 	# ---------------------------------------------------------------------------------------------------------
 	
@@ -249,12 +215,16 @@ def main_manual():
 		# user events
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT : sys.exit(0)
-		
+			
+			# get key events (no repeats)
+			elif event.type == pygame.KEYDOWN:
+				if event.key == pygame.K_r   : rocket.set_pos(Vec2d(5,5)).stop() # reset rocket
+				elif event.key == pygame.K_a : autoOn = not autoOn # toggle auto control
+		# get key downs (repeats)
 		keys = pygame.key.get_pressed()
 		if keys[pygame.K_ESCAPE] : sys.exit(0)
 		if keys[pygame.K_LEFT]   : rocket.apply_force(100,0)
 		if keys[pygame.K_RIGHT]  : rocket.apply_force(0,100)
-		if keys[pygame.K_r]      : rocket.set_pos(Vec2d(5,5)).stop() # reset rocket
 		
 		# physics
 		rocket.apply_damping(2, 2)
@@ -264,22 +234,29 @@ def main_manual():
 		rangle = rocket.get_angle() + pi/2
 		
 		# controller
-		err = rpos - target.pos
-		vel = rocket.get_linvel()
-		fx = sys1.compute({'errx': err.x, 'velx': vel.x}, 'fx')
-		fy = sys2.compute({'erry': err.y, 'vely': vel.y}, 'fy')
-		
-		f1 = Vec2d(fx,fy) # force towards target
-		f2 = Vec2d(0,1) # force to stay upright
-		ftot = f1*1 + f2*3 # weighted sum of forces
-		fa = math.atan2(ftot.y,ftot.x)
-		
-		erra = rangle - fa
-		if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
-		
-		r1 = sys3.compute({'erra': erra, 'vela': rocket.get_rotvel()}) # rotate towards force
-		f = Vec2d(r1['fl'], r1['fr'])*f1.length*500
-		rocket.apply_force(f.x, f.y)
+		if autoOn:
+			err = rpos - target.pos
+			vel = rocket.get_linvel()
+			fx = sys1.compute({'errx': err.x/5, 'velx': vel.x/10}, 'fx')
+			fy = sys2.compute({'erry': err.y/1, 'vely': vel.y/10}, 'fy')
+			
+			fa = math.atan2(abs(fy),fx)
+			
+			erra = rangle - fa
+			if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
+			r1 = sys3.compute({'erra': erra/pi*2, 'vela': rocket.get_rotvel()/pi/4}) # rotate towards force
+			
+			ftmp = Vec2d(fx, max(0,fy))
+			f = Vec2d(1,1)*ftmp.length*120 + Vec2d(r1['fl'], r1['fr'])*400
+			rocket.apply_force(f.x, f.y)
+			
+			#fa = math.atan2(fy,fx)
+			#erra = rangle - fa
+			#if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
+			#r1 = sys3.compute({'erra': erra/pi*2, 'vela': rocket.get_rotvel()/pi/4}) # rotate towards force
+			#
+			#f = Vec2d(r1['fl']+1, r1['fr']+1) * 200
+			#rocket.apply_force(f.x, f.y)
 		
 		# graphics
 		screen.fill((255,255,255))
@@ -288,10 +265,19 @@ def main_manual():
 		cam_t = Transform.translation(-off.x, -off.y)
 		
 		for obj in objects : obj.draw(screen, cam_t)
+		if autoOn:
+			pass
+			#rocket.draw_arrow(screen,cam_t, Vec2d(fx,abs(fy)), 'green')
 		
 		pygame.display.flip()
 		clock.tick(fps)
-def main_training():
+
+# tune existing controller using GA
+def main_training_tune():
+	gains = [1/5, 1/10, 1/1, 1/10, 1/pi, 1/(2*pi), 120, 400]
+
+# try to evolve a full controller using GA
+def main_training_all():
 	space = pymunk.Space()
 	space.gravity = (0.0, 9.81)
 	
