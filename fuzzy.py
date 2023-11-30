@@ -1,4 +1,7 @@
 import matplotlib.pyplot as plt
+import numpy as np
+import pygad
+
 import math
 from copy import deepcopy
 import random
@@ -137,7 +140,7 @@ def COG(rules):
 		out += area*fset.b
 		totArea += area
 	
-	return out / totArea
+	return out / max(1e-9,totArea)
 
 # fuzzy rule (one output variable per rule)
 class Rule:
@@ -287,91 +290,141 @@ class System:
 			
 			lastToterr = toterr
 
-# Genetic algorithm (using gaussian sets)
-def floatToFxdstr(val,fxdpnt,n) : return str(round(val*fxdpnt)).zfill(n)[:n]
-def fxdstrToFloat(val,fxdpnt,n) : return int(val)/fxdpnt
+# Genetic algorithm using PyGAD (using gaussian sets)
 class Population:
 	def __init__(self, rules):
-		self.fxdpnt = 10**3
-		self.nbc = 10
-		
-	# randomize first generation
-	def init(self, nbentities):
-		if len(nbentities) % 2 != 0 :
-			print("ERROR :: must have an even number for the population")
-			sys.exit(0)	
-		
-		self.entities = [ System(deepcopy(rules)) for i in range(nbentities) ]
-		for entity in self.entities:
-			for rule in entity.rules:
-				for tag in rule.fsets_in:
-					rule.fsets_in[tag].b = random.uniform(rule.fsets_in[tag].w1, rule.fsets_in[tag].w2)
-					rule.fsets_in[tag].std = random.uniform(rule.fsets_in[tag].w1, rule.fsets_in[tag].w2)
-				rule.fset_out.b = random.uniform(rule.fset_out.b.w1, rule.fset_out.b.w2)
-				rule.fset_out.std = random.uniform(rule.fset_out.b.w1, rule.fset_out.b.w2)
+		self.system = System(rules)
 	
-	@staticmethod
-	def chromosomeFromSystem(system):
-		chromosome = ''
-		for rule in system.rules:
-			for fset in rule.fsets_in.values():
-				chromosome += floatToFxdstr(fset.b, self.fxdpnt,self.nbc)
-				chromosome += floatToFxdstr(fset.std, self.fxdpnt,self.nbc)
-			chromosome += floatToFxdstr(rule.fset_out.b, self.fxdpnt,self.nbc)
-			chromosome += floatToFxdstr(rule.fset_out.std, self.fxdpnt,self.nbc)
-		return chromosome
-	@staticmethod
-	def systemFromChromosome(system, chromosome):
-		for rule in system.rules:
-			for fset in rule.fsets_in.values():
-				fset.b = clamp( fset.w1, fxdstrToFloat(chromosome[i:i+self.nbc]), fset.w2 )   ; i += self.nbc
-				fset.std = clamp( fset.w1, fxdstrToFloat(chromosome[i:i+self.nbc]), fset.w2 ) ; i += self.nbc
-				
-			rule.fset_out.b = clamp( rule.fset_out.w1, fxdstrToFloat(chromosome[i:i+self.nbc]), rule.fset_out.w2 )   ; i += self.nbc
-			rule.fset_out.std = clamp( rule.fset_out.w1, fxdstrToFloat(chromosome[i:i+self.nbc]), rule.fset_out.w2 ) ; i += self.nbc
-	
-	def generation(self, fitness):
-		fitres = [fitness(entity) for entity in self.entities]
-		fittot = sum(fitres)
-		probs = [fitval/fittot for fitval in fitres]
-		
-		matingpool = random.choices(self.entities, weights=probs, k=len(self.entities))
-		matingpool_inds = range(len(matingpool))
-		
-		pairs = []
-		while len(matingpool_inds) != 0:
-			entity1 = matingpool[ matingpool_inds.pop() ]
-			enity2 = matingpool[ matingpool_inds.pop(random.choice(matingpool_inds)) ]
-			pairs.append((entity, entity2))
-		
-		prob_crossover = 0.95
-		for pair in pairs:
-			chromosome0 = Population.chromosomeFromSystem(pair[0])
-			chromosome1 = Population.chromosomeFromSystem(pair[1])
+	def init(self, nbiter,nbpop,fitness):
+		population = []
+		for i in range(nbpop):
+			population.append([])
 			
-			# crossover
-			if random.uniform(0,1) <= prob_crossover:
-				crosssite = randint(0, len(chromosome0))
-				nchromosome0 = chromosome0[:crosssite-1] + chromosome1[crosssite:]
-				nchromosome1 = chromosome1[:crosssite-1] + chromosome0[crosssite:]
-			else:
-				nchromosome0 = chromosome0
-				nchromosome1 = chromosome1
-				
-			Population.systemFromChromosome(pair[0], nchromosome0)
-			Population.systemFromChromosome(pair[1], nchromosome1)
+			# randomize system parameters
+			for rule in self.system.rules:
+				for tag in rule.fsets_in:
+					population[-1].append( random.uniform(rule.fsets_in[tag].w1, rule.fsets_in[tag].w2) )
+					population[-1].append( random.uniform(rule.fsets_in[tag].w1, rule.fsets_in[tag].w2) )
+				population[-1].append( random.uniform(rule.fset_out.w1, rule.fset_out.w2) )
+				population[-1].append( random.uniform(rule.fset_out.w1, rule.fset_out.w2) )
 		
-		return fitres
+		def progress(ga_inst):
+			print(f"Population {ga_inst.generations_completed}/{ga_inst.num_generations} :: fitness = {ga_inst.best_solution()[1]}")
+		
+		self.ga_inst = pygad.GA(
+			num_generations=nbiter,
+			num_parents_mating=round(nbpop/2),
+			initial_population=np.array(population),
+			fitness_func=lambda ga_inst,solution,solution_idx : self.chromosomeFitness(fitness, solution),
+			on_generation=progress
+		)
+	def evolve(self):
+		self.ga_inst.run()
+		self.ga_inst.plot_fitness()
+		self.ga_inst.save(filename="ga_data")
 	
-	def evolve(self, fitness, maxgens):
-		maxfits = []
-		for i in range(maxgens):
-			# pre-reproduction fitness
-			maxfit = max(self.evolve(fitness))
-			maxfits.append(maxfit)
-			print(f"Population {i}/{maxgens} :: max fit = {maxfit}")
+	def chromosomeFitness(self, fun, chromosome):
+		# update system from chromosome
+		i=0
+		for rule in self.system.rules:
+			for fset in rule.fsets_in.values():
+				fset.b   =           clamp(fset.w1, chromosome[i], fset.w2)  ;i+=1
+				fset.std = max(1e-9, clamp(fset.w1, chromosome[i], fset.w2)) ;i+=1
+				
+			rule.fset_out.b   =           clamp(rule.fset_out.w1, chromosome[i], rule.fset_out.w2)  ;i+=1
+			rule.fset_out.std = max(1e-9, clamp(rule.fset_out.w1, chromosome[i], rule.fset_out.w2)) ;i+=1
 		
-		# final fitness
-		maxfit = max([fitness(entity) for entity in self.entities])
-		maxfits.append(maxfit)
-		print(f"Final population :: max fit = {maxfit}")
+		# compute fitness using new system
+		return fun()
+
+# Genetic algorithm (using gaussian sets)
+#class Population:
+#	def __init__(self, rules):
+#		self.system = System(rules)
+#		self.fxdpnt = 10**3
+#		self.nbc = 10
+#		
+#	# randomize population
+#	def init(self, nbentities):
+#		if nbentities % 2 != 0 :
+#			print("ERROR :: must have an even number for the population")
+#			sys.exit(0)	
+#		
+#		self.chromosomes = []
+#		for i in range(nbentities):
+#			# randomize system parameters
+#			for rule in self.system.rules:
+#				for tag in rule.fsets_in:
+#					rule.fsets_in[tag].b = random.uniform(rule.fsets_in[tag].w1, rule.fsets_in[tag].w2)
+#					rule.fsets_in[tag].std = random.uniform(rule.fsets_in[tag].w1, rule.fsets_in[tag].w2)
+#				rule.fset_out.b = random.uniform(rule.fset_out.w1, rule.fset_out.w2)
+#				rule.fset_out.std = random.uniform(rule.fset_out.w1, rule.fset_out.w2)
+#			# convert to chromosome data
+#			self.chromosomes.append(self.chromosomeFromSystem(self.system))
+#	
+#	def floatToFxdstr(self, val) : return str(round(val*self.fxdpnt)).zfill(self.nbc)[:self.nbc]
+#	def fxdstrToFloat(self, val) : return int(val)/self.fxdpnt
+#	
+#	def chromosomeFromSystem(self, system):
+#		chromosome = ''
+#		for rule in system.rules:
+#			for fset in rule.fsets_in.values():
+#				chromosome += self.floatToFxdstr(fset.b)
+#				chromosome += self.floatToFxdstr(fset.std)
+#			chromosome += self.floatToFxdstr(rule.fset_out.b)
+#			chromosome += self.floatToFxdstr(rule.fset_out.std)
+#		return chromosome
+#	def systemFromChromosome(self, system, chromosome):
+#		i = 0
+#		for rule in system.rules:
+#			for fset in rule.fsets_in.values():
+#				fset.b = clamp( fset.w1, self.fxdstrToFloat(chromosome[i:i+self.nbc]), fset.w2 )   ; i += self.nbc
+#				fset.std = clamp( fset.w1, self.fxdstrToFloat(chromosome[i:i+self.nbc]), fset.w2 ) ; i += self.nbc
+#				
+#			rule.fset_out.b = clamp( rule.fset_out.w1, self.fxdstrToFloat(chromosome[i:i+self.nbc]), rule.fset_out.w2 )   ; i += self.nbc
+#			rule.fset_out.std = clamp( rule.fset_out.w1, self.fxdstrToFloat(chromosome[i:i+self.nbc]), rule.fset_out.w2 ) ; i += self.nbc
+#	
+#	def computeFitness(self, fitness):
+#		fitres = []
+#		for chromosome in self.chromosomes:
+#			self.systemFromChromosome(self.system, chromosome)
+#			fitres.append(fitness(self.system))
+#		return fitres
+#	def generation(self, fitness):
+#		fitres = self.computeFitness(fitness)
+#		fittot = sum(fitres)
+#		probs = [fitval/fittot for fitval in fitres]
+#		
+#		matingpool = random.choices(self.chromosomes, weights=probs, k=len(self.chromosomes))
+#		random.shuffle(matingpool)
+#		
+#		# clear chromosomes
+#		self.chromosomes = []
+#		
+#		pairs = [matingpool[i:i+2] for i in range(0,len(matingpool),2)]
+#		
+#		prob_crossover = 0.95
+#		for pair in pairs:
+#			chromosome0 = pair[0] ; chromosome1 = pair[1]
+#			
+#			# crossover
+#			if random.uniform(0,1) <= prob_crossover:
+#				crosssite = random.randint(0, len(chromosome0))
+#				nchromosome0 = chromosome0[:crosssite-1] + chromosome1[crosssite:]
+#				nchromosome1 = chromosome1[:crosssite-1] + chromosome0[crosssite:]
+#			else:
+#				nchromosome0 = chromosome0
+#				nchromosome1 = chromosome1
+#				
+#			self.chromosomes += [nchromosome0, nchromosome1]
+#			
+#		return fitres
+#	
+#	def evolve(self, fitness, maxgens):
+#		maxfits = []
+#		for i in range(maxgens):
+#			# pre-reproduction fitness
+#			maxfit = max(self.generation(fitness))
+#			maxfits.append(maxfit)
+#			print(f"Population {i}/{maxgens} :: max fit = {maxfit}")
+#
