@@ -262,21 +262,23 @@ def main_manual():
 		
 		rpos = rocket.get_pos()
 		rangle = rocket.get_angle() + pi/2
-		#if rangle > pi : rangle = -(2*pi - rangle)
 		
 		# controller
 		err = rpos - target.pos
 		vel = rocket.get_linvel()
 		fx = sys1.compute({'errx': err.x, 'velx': vel.x}, 'fx')
 		fy = sys2.compute({'erry': err.y, 'vely': vel.y}, 'fy')
-		f1 = Vec2d(fx,fy)*500
-		a1 = math.atan2(fy,fx)
 		
-		erra = rangle-a1
+		f1 = Vec2d(fx,fy) # force towards target
+		f2 = Vec2d(0,1) # force to stay upright
+		ftot = f1*1 + f2*3 # weighted sum of forces
+		fa = math.atan2(ftot.y,ftot.x)
+		
+		erra = rangle - fa
 		if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
 		
 		r1 = sys3.compute({'erra': erra, 'vela': rocket.get_rotvel()}) # rotate towards force
-		f = Vec2d(r1['fl'], r1['fr']) * f1.length
+		f = Vec2d(r1['fl'], r1['fr'])*f1.length*500
 		rocket.apply_force(f.x, f.y)
 		
 		# graphics
