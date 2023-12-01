@@ -15,11 +15,15 @@ import random
 import fuzzy as fz
 
 
-ws = (1000, 600) # screen dimensions in pixels
-pxPerM = 100 # px/m
-def coord_phys2screen(coord, transfo): # transform physics coordinates to screen coordintaes
-	tmp = transfo @ coord
-	return (int(tmp[0]), -int(tmp[1]))
+class Camera:
+	def __init__(self, pos, screen, ratio):
+		self.screen = screen
+		self.r = ratio # pxPerM
+		self.sz = Vec2d(*screen.get_size()) # px size
+		self.pos = pos
+	def conv_coord(self, coord): # convert from physics coord to this camera's screen coord
+		tmp = (-self.pos*self.r + self.sz/2) + coord*self.r
+		return (int(tmp[0]), int(-tmp[1] + self.sz.y))
 
 class Shape:
 	def set_pos(self, pos):
@@ -34,10 +38,9 @@ class CircleShape(Shape):
 		self.shape.elasticity = 0.7
 		
 		space.add(self.shape)
-	
-	def draw(self, screen,transfo):
+	def draw(self, cam):
 		pos = self.shape.offset.rotated(self.shape.body.angle) + self.shape.body.position
-		pygame.draw.circle(screen, "blue", coord_phys2screen(pos,transfo), int(pxPerM*self.shape.radius))
+		pygame.draw.circle(cam.screen, "blue", cam.conv_coord(pos), int(cam.r*self.shape.radius))
 class PolyShape(Shape):
 	def __init__(self, space,body, pnts, m):
 		self.shape = pymunk.Poly(body, pnts)
@@ -47,12 +50,12 @@ class PolyShape(Shape):
 		
 		space.add(self.shape)
 	
-	def draw(self, screen,transfo):
+	def draw(self, cam):
 		pnts = []
 		for v in self.shape.get_vertices():
 			pos = v.rotated(self.shape.body.angle) + self.shape.body.position
-			pnts.append(coord_phys2screen(pos,transfo))
-		pygame.draw.polygon(screen, "blue", pnts)
+			pnts.append(cam.conv_coord(pos))
+		pygame.draw.polygon(cam.screen, "blue", pnts)
 class RectShape(PolyShape):
 	def __init__(self, space,body, w,h, m):
 		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
@@ -72,14 +75,15 @@ class Ground:
 			seg.friction = 1
 		
 		# for the graphics
-		self.pnts = [*pnts]
+		self.pnts = [Vec2d(*pnt) for pnt in pnts]
 		self.thick = thick
 		
 		space.add(*self.segments)
 	
-	def draw(self, screen,transfo):
-		pygame.draw.lines(screen, "red", False, [coord_phys2screen(pnt,transfo) for pnt in self.pnts], int(pxPerM*self.thick*2))
-		#for pnt in self.pnts : pygame.draw.circle(screen, "red", coord_phys2screen(pnt,transfo), int(pxPerM*self.thick)) # line caps
+	def draw(self, cam):
+		pygame.draw.lines(cam.screen, "black", False, [cam.conv_coord(pnt) for pnt in self.pnts], int(pxPerM*self.thick*2))
+	def drawmini(self, cam):
+		pygame.draw.lines(cam.screen, "black", False, [cam.conv_coord(pnt) for pnt in self.pnts], 3)
 
 class Rocket:
 	def __init__(self, space, w,h):
@@ -138,38 +142,49 @@ class Rocket:
 		self.set_rotvel(0)
 		return self
 	
-	def draw_arrow(self, screen,transfo, p, color):
+	def draw_arrow(self, cam, p, color):
 		pos0 = self.body.position
 		pos1 = p + pos0
-		pygame.draw.line(screen, color, coord_phys2screen(pos0,transfo), coord_phys2screen(pos1,transfo), 3)
-	def draw(self, screen,transfo):
-		self.hull.draw(screen,transfo)
-		for prop in self.props : prop.draw(screen,transfo)
-		# debug: force direction
-		#self.draw_arrow(screen,transfo, Vec2d(cos(self.forceangle[1]),sin(self.forceangle[1]))*10, "red")
-
+		pygame.draw.line(cam.screen, color, cam.conv_coord(pos0), cam.conv_coord(pos1), 3)
+	def draw(self, cam):
+		self.hull.draw(cam)
+		for prop in self.props : prop.draw(cam)
+	def drawmini(self, cam): # for minimap : display as triangle
+		pos = Vec2d(*cam.conv_coord(self.body.position))
+		h = 12 ; w = 6
+		t = Transform.rotation(-self.get_angle())
+		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
+		pygame.draw.polygon(cam.screen, "green", pnts)
 class Target:
-	def __init__(self, pos):
+	def __init__(self, pos, r, dt):
 		self.pos = pos
-	def draw(self, screen,transfo):
-		pygame.draw.circle(screen, "red", coord_phys2screen(self.pos,transfo), 10)
+		self.r = r
+		self.dt = dt
+	def draw(self, cam):
+		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), 10)
+	def drawmini(self, cam):
+		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
+
 
 def main_manual():
 	global pxPerM
 	
+	# Physics init ----------------------------------------------------------------------------------------------
 	space = pymunk.Space()
 	space.gravity = (0.0, -9.81)
 	
+	cage_w = 40 ; cage_h = 30
 	rocket = Rocket(space, 0.5, 1).set_pos(Vec2d(5,5))
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
-	target = Target(Vec2d(18,11))
+	target = Target(Vec2d(18,11), 2, 4)
 	objects = [
-		Ground(space, [(0,0),(20,0),(20,20),(0,20),(0,0)]),
+		Ground(space, [(-cage_w/2,cage_h/2),(-cage_w/2,-cage_h/2),(cage_w/2,-cage_h/2),(cage_w/2,cage_h/2),(-cage_w/2,cage_h/2)]),
 		rocket,
 		target
 	]
+	# -----------------------------------------------------------------------------------------------------------
 	
-	# Fuzzy systems ------------------------------------------------------------------------------------------
+	# Fuzzy systems init ------------------------------------------------------------------------------------------
 	autoOn = False
 	nbsets = 5 # impaire
 	mset = nbsets//2 # index of middle set
@@ -205,18 +220,24 @@ def main_manual():
 	sys3 = fz.System(rules3)
 	# ---------------------------------------------------------------------------------------------------------
 	
+	# Graphics init -------------------------------------------------------------------------------------------
+	ws = (1000, 600) # screen dimensions in pixels
+	pxPerM = 100 # px/m
 	pygame.init()
 	screen = pygame.display.set_mode(ws)
 	pygame.display.set_caption("Rocket control")
 	clock = pygame.time.Clock()
 	keysdown = {}
 	fps = 60
+	maincam = Camera(Vec2d(0,0), screen, pxPerM)
 	
 	mms = (ws[0]/5, ws[1]/5)
-	mm_center = (-5,10)
-	mmdots = 5 # minimap dot size
 	minimap = pygame.Surface(mms)
-	minimap.set_alpha(128)
+	mmcam = Camera(Vec2d(0,0), minimap, pxPerM/40) # minimap camera
+	mmdots = 3 # minimap dot size
+	#minimap.set_alpha(128)
+	# ----------------------------------------------------------------------------------------------------------
+	
 	while True:
 		# user events
 		for event in pygame.event.get():
@@ -263,20 +284,15 @@ def main_manual():
 		# graphics
 		screen.fill((255,255,255))
 		
-		screen_center = Vec2d(ws[0]/2/pxPerM, -ws[1]/2/pxPerM) # screen center in physics coordinates
-		off = rpos - screen_center
-		cam_t = Transform.scaling(pxPerM).translated(-off.x, -off.y)
+		maincam.pos = rpos
 		
-		for obj in objects : obj.draw(screen, cam_t)
+		for obj in objects : obj.draw(maincam)
 		if autoOn:
-			rocket.draw_arrow(screen,cam_t, Vec2d(fx,fy),'green')
+			rocket.draw_arrow(maincam, Vec2d(fx,fy),'green')
 		
 		# minimap
-		mm_off = rpos - mm_center
-		mm_t = Transform.scaling(pxPerM/20).translated(-mm_off.x, -mm_off.y)
 		minimap.fill((128,128,128))
-		pygame.draw.circle(minimap, "red", coord_phys2screen(rpos,mm_t), mmdots)
-		pygame.draw.circle(minimap, "green", coord_phys2screen(target.pos,mm_t), mmdots)
+		for obj in objects : obj.drawmini(mmcam)
 		screen.blit(minimap, (10,ws[1]-(mms[1]+10))) 
 		
 		pygame.display.flip()
