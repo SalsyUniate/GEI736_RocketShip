@@ -314,8 +314,8 @@ def main_manual():
 			elif event.type == pygame.KEYDOWN:
 				if event.key == pygame.K_r   : rockets[rind].set_pos(Vec2d(5,5)).stop() # reset rocket
 				elif event.key == pygame.K_a : rockets[rind].auto = not rockets[rind].auto # toggle auto control
-				elif event.key == pygame.K_i : pxPerM *= 120/100 # zoom in
-				elif event.key == pygame.K_o : pxPerM *= 80/100 # zoom out
+				elif event.key == pygame.K_i : maincam.r *= 120/100 # zoom in
+				elif event.key == pygame.K_o : maincam.r *= 80/100 # zoom out
 		# get key downs (repeats)
 		keys = pygame.key.get_pressed()
 		if keys[pygame.K_ESCAPE] : sys.exit(0)
