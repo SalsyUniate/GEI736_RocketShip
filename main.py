@@ -6,14 +6,15 @@ import matplotlib.pyplot as plt
 
 import sys
 import math
-pi = math.pi
-cos = math.cos
-sin = math.sin
+pi = math.pi ; cos = math.cos ; sin = math.sin
 from copy import deepcopy as dcp
 import random
+from time import time
 
 import fuzzy as fz
 
+# object literal
+Obj = lambda **kwargs: type("Object", (), kwargs)()
 
 class Camera:
 	def __init__(self, pos, screen, ratio):
@@ -85,8 +86,23 @@ class Ground:
 	def drawmini(self, cam):
 		pygame.draw.lines(cam.screen, "black", False, [cam.conv_coord(pnt) for pnt in self.pnts], 3)
 
+class Target:
+	def __init__(self, pos, r, dt):
+		self.pos = pos
+		self.r = r
+		self.dt = dt
+	def draw(self, cam):
+		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), 10)
+	def drawmini(self, cam):
+		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
+
 class Rocket:
 	def __init__(self, space, w,h):
+		self.set_targets([])
+		
+		self.controller = None
+		self.auto = True
+		
 		self.body = pymunk.Body()
 		space.add(self.body)
 		
@@ -142,6 +158,39 @@ class Rocket:
 		self.set_rotvel(0)
 		return self
 	
+	def set_targets(self, targets):
+		self.targets = targets
+		self.tind = 0 # current target index
+		self.target = None if len(self.targets) == 0 else self.targets[0] # current target
+		self.lastT = None # target start time
+	def in_target(self):
+		if self.target is None : return False
+		return (self.body.position - self.target.pos).length <= self.target.r
+	def update_target(self, dt):
+		if not self.in_target() : self.lastT = None
+		else:
+			if self.lastT is None : self.lastT = dt
+			elif dt - self.lastT >= self.target.dt:
+				self.lastT = 0
+				self.tind = min(self.tind+1, len(self.targets)-1)
+				self.target = self.targets[self.tind]
+	
+	def set_controller(self, controller):
+		self.controller = controller
+		return self
+	def apply_control(self):
+		if not self.auto : return
+		
+		target = self.targets[self.tind]
+		
+		fl, fr = self.controller.action(
+			self.get_pos() - target.pos,
+			self.get_linvel(),
+			self.get_angle() + pi/2, # [0, 2pi]
+			self.get_rotvel(),
+		)
+		self.apply_force(fl, fr)
+	
 	def draw_arrow(self, cam, p, color):
 		pos0 = self.body.position
 		pos1 = p + pos0
@@ -155,16 +204,61 @@ class Rocket:
 		t = Transform.rotation(-self.get_angle())
 		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
 		pygame.draw.polygon(cam.screen, "green", pnts)
-class Target:
-	def __init__(self, pos, r, dt):
-		self.pos = pos
-		self.r = r
-		self.dt = dt
-	def draw(self, cam):
-		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), 10)
-	def drawmini(self, cam):
-		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
 
+# Fuzzy controllers
+class Controller : pass
+class Controller_alix1(Controller):
+	def __init__(self):
+		
+		nbsets = 5 # impaire
+		mset = nbsets//2 # index of middle set
+		# system (1) :: X -> force X
+		fsets_errx = fz.SetGauss.autoN_cn(nbsets, True, tag='errx')
+		fsets_velx = fz.SetGauss.autoN_cn(nbsets, True, tag='velx')
+		fsets_fx = fz.SetGauss.autoN_cn(  nbsets, False, tag='fx') # output x-force
+		rules1 = [fz.Rule(fz.AND(fsets_errx[i], fsets_velx[n]), fsets_fx[fz.clamp(0, -(i-mset+n-mset) + mset, nbsets-1)]) for i in range(nbsets) for n in range(nbsets)]
+		self.sys1 = fz.System(rules1)
+		#fz.Set.plotAll(fsets_errx) ; fz.Set.plotAll(fsets_velx) ; fz.Set.plotAll(fsets_fx) ; plt.show()
+		# system (2) :: Y -> force Y
+		fsets_erry = fz.SetGauss.autoN_cn(nbsets, True, tag='erry')
+		fsets_vely = fz.SetGauss.autoN_cn(nbsets, True, tag='vely')
+		fsets_fy = fz.SetGauss.autoN_cn(  nbsets, False, tag='fy') # output y-force
+		rules2 = [fz.Rule(fz.AND(fsets_erry[i], fsets_vely[n]), fsets_fy[fz.clamp(0, -(i-mset+n-mset) + mset, nbsets-1)]) for i in range(nbsets) for n in range(nbsets)]
+		self.sys2 = fz.System(rules2)
+		#fz.Set.plotAll(fsets_erry) ; fz.Set.plotAll(fsets_vely) ; fz.Set.plotAll(fsets_fy) ; plt.show()
+		# system (3) :: Angle -> increment thrust L & R
+		fsets_erra = fz.SetGauss.autoN_cn(nbsets, True, tag='erra')
+		fsets_vela = fz.SetGauss.autoN_cn(nbsets, True, tag='vela')
+		fsets_fl = fz.SetGauss.autoN_cn(nbsets, False, tag='fl')
+		fsets_fr = fz.SetGauss.autoN_cn(nbsets, False, tag='fr')
+		rules3 = []
+		for i in range(nbsets):
+			for n in range(nbsets) :
+				val = i-mset+n-mset
+				indL = fz.clamp(0, val + mset, nbsets-1)
+				indR = fz.clamp(0, -val + mset, nbsets-1)
+				rules3 += [
+					fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fl[indL]),
+					fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fr[indR])
+				]
+		self.sys3 = fz.System(rules3)
+		
+	# must return (thrust left ; thrust right)
+	def action(self, err,vel,rangle,rvel):
+		fx = self.sys1.compute({'errx': err.x/5, 'velx': vel.x/5}, 'fx')
+		fy = self.sys2.compute({'erry': err.y/1, 'vely': vel.y/5}, 'fy')
+		
+		fa = math.atan2(abs(fy),fx)
+		erra = rangle - fa
+		if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
+		r1 = self.sys3.compute({'erra': erra/pi*4, 'vela': rvel/pi/1}) # rotate towards angle
+		
+		f1 = Vec2d(fx, fy) # force to target
+		f2 = Vec2d(cos(rangle), sin(rangle)) # rocket dir
+		thrust = max(0, f1.dot(f2)) * 200
+		
+		f = Vec2d(1,1)*thrust + Vec2d(r1['fl'], r1['fr'])*200
+		return (f.x,f.y)
 
 def main_manual():
 	global pxPerM
@@ -173,51 +267,24 @@ def main_manual():
 	space = pymunk.Space()
 	space.gravity = (0.0, -9.81)
 	
-	cage_w = 40 ; cage_h = 30
-	rocket = Rocket(space, 0.5, 1).set_pos(Vec2d(5,5))
-	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
-	target = Target(Vec2d(18,11), 2, 4)
-	objects = [
-		Ground(space, [(-cage_w/2,cage_h/2),(-cage_w/2,-cage_h/2),(cage_w/2,-cage_h/2),(cage_w/2,cage_h/2),(-cage_w/2,cage_h/2)]),
-		rocket,
-		target
+	rockets = [
+		Rocket(space, 0.5, 1).set_pos(Vec2d(i,5)).set_controller(Controller_alix1()) \
+		for i in range(3)
 	]
+	rind = 0 # focused rocket index
+	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
+	
+	waypoints = [(2,0),(8,8),(-5, -10)]
+	targets = [ Target(Vec2d(*p), 2, 4) for p in waypoints]
+	for rocket in rockets : rocket.set_targets(targets)
+	
+	cage_w = 40 ; cage_h = 30
+	ground = Ground(space, [(-cage_w/2,cage_h/2),(-cage_w/2,-cage_h/2),(cage_w/2,-cage_h/2),(cage_w/2,cage_h/2),(-cage_w/2,cage_h/2)])
+	
+	objects = [ground, *rockets, *targets]
 	# -----------------------------------------------------------------------------------------------------------
 	
-	# Fuzzy systems init ------------------------------------------------------------------------------------------
-	autoOn = False
-	nbsets = 5 # impaire
-	mset = nbsets//2 # index of middle set
-	# system (1) :: X -> force X
-	fsets_errx = fz.SetGauss.autoN_cn(nbsets, True, tag='errx')
-	fsets_velx = fz.SetGauss.autoN_cn(nbsets, True, tag='velx')
-	fsets_fx = fz.SetGauss.autoN_cn(  nbsets, False, tag='fx') # output x-force
-	rules1 = [fz.Rule(fz.AND(fsets_errx[i], fsets_velx[n]), fsets_fx[fz.clamp(0, -(i-mset+n-mset) + mset, nbsets-1)]) for i in range(nbsets) for n in range(nbsets)]
-	sys1 = fz.System(rules1)
-	#fz.Set.plotAll(fsets_errx) ; fz.Set.plotAll(fsets_velx) ; fz.Set.plotAll(fsets_fx) ; plt.show()
-	# system (2) :: Y -> force Y
-	fsets_erry = fz.SetGauss.autoN_cn(nbsets, True, tag='erry')
-	fsets_vely = fz.SetGauss.autoN_cn(nbsets, True, tag='vely')
-	fsets_fy = fz.SetGauss.autoN_cn(  nbsets, False, tag='fy') # output y-force
-	rules2 = [fz.Rule(fz.AND(fsets_erry[i], fsets_vely[n]), fsets_fy[fz.clamp(0, -(i-mset+n-mset) + mset, nbsets-1)]) for i in range(nbsets) for n in range(nbsets)]
-	sys2 = fz.System(rules2)
-	#fz.Set.plotAll(fsets_erry) ; fz.Set.plotAll(fsets_vely) ; fz.Set.plotAll(fsets_fy) ; plt.show()
-	# system (3) :: Angle -> increment thrust L & R
-	fsets_erra = fz.SetGauss.autoN_cn(nbsets, True, tag='erra')
-	fsets_vela = fz.SetGauss.autoN_cn(nbsets, True, tag='vela')
-	fsets_fl = fz.SetGauss.autoN_cn(nbsets, False, tag='fl')
-	fsets_fr = fz.SetGauss.autoN_cn(nbsets, False, tag='fr')
-	rules3 = []
-	for i in range(nbsets):
-		for n in range(nbsets) :
-			val = i-mset+n-mset
-			indL = fz.clamp(0, val + mset, nbsets-1)
-			indR = fz.clamp(0, -val + mset, nbsets-1)
-			rules3 += [
-				fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fl[indL]),
-				fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fr[indR])
-			]
-	sys3 = fz.System(rules3)
+	# Fuzzy control ------------------------------------------------------------------------------------------
 	# ---------------------------------------------------------------------------------------------------------
 	
 	# Graphics init -------------------------------------------------------------------------------------------
@@ -245,50 +312,32 @@ def main_manual():
 			
 			# get key events (no repeats)
 			elif event.type == pygame.KEYDOWN:
-				if event.key == pygame.K_r   : rocket.set_pos(Vec2d(5,5)).stop() # reset rocket
-				elif event.key == pygame.K_a : autoOn = not autoOn # toggle auto control
+				if event.key == pygame.K_r   : rockets[rind].set_pos(Vec2d(5,5)).stop() # reset rocket
+				elif event.key == pygame.K_a : rockets[rind].auto = not rockets[rind].auto # toggle auto control
 				elif event.key == pygame.K_i : pxPerM *= 120/100 # zoom in
 				elif event.key == pygame.K_o : pxPerM *= 80/100 # zoom out
 		# get key downs (repeats)
 		keys = pygame.key.get_pressed()
 		if keys[pygame.K_ESCAPE] : sys.exit(0)
-		if keys[pygame.K_LEFT]   : rocket.apply_force(100,0)
-		if keys[pygame.K_RIGHT]  : rocket.apply_force(0,100)
+		if keys[pygame.K_LEFT]   : rockets[rind].apply_force(100,0)
+		if keys[pygame.K_RIGHT]  : rockets[rind].apply_force(0,100)
 		
 		# physics
 		rocket.apply_damping(2, 2)
 		space.step(1/fps)
 		
-		rpos = rocket.get_pos()
-		rangle = rocket.get_angle() + pi/2
+		rpos = rockets[rind].get_pos()
 		
 		# controller
-		if autoOn:
-			err = rpos - target.pos
-			vel = rocket.get_linvel()
-			fx = sys1.compute({'errx': err.x/5, 'velx': vel.x/5}, 'fx')
-			fy = sys2.compute({'erry': err.y/1, 'vely': vel.y/5}, 'fy')
-			
-			fa = math.atan2(abs(fy),fx)
-			erra = rangle - fa
-			if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
-			r1 = sys3.compute({'erra': erra/pi*4, 'vela': rocket.get_rotvel()/pi/1}) # rotate towards angle
-			
-			f1 = Vec2d(fx, fy) # force to target
-			f2 = Vec2d(cos(rangle), sin(rangle)) # rocket dir
-			thrust = max(0, f1.dot(f2)) * 200
-			
-			f = Vec2d(1,1)*thrust + Vec2d(r1['fl'], r1['fr'])*200
-			rocket.apply_force(f.x, f.y)
+		for rocket in rockets:
+			rocket.update_target(time())
+			rocket.apply_control()
 		
 		# graphics
 		screen.fill((255,255,255))
 		
 		maincam.pos = rpos
-		
 		for obj in objects : obj.draw(maincam)
-		if autoOn:
-			rocket.draw_arrow(maincam, Vec2d(fx,fy),'green')
 		
 		# minimap
 		minimap.fill((128,128,128))
@@ -297,10 +346,6 @@ def main_manual():
 		
 		pygame.display.flip()
 		clock.tick(fps)
-
-# tune existing controller using GA
-def main_training_tune():
-	gains = [1/5, 1/10, 1/1, 1/10, 1/pi, 1/(2*pi), 120, 400]
 
 # try to evolve a full controller using GA
 def main_training_all():
