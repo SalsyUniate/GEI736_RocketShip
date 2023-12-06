@@ -37,26 +37,27 @@ class CircleShape(Shape):
 		self.shape.mass = m
 		self.shape.friction = 1
 		self.shape.elasticity = 0.7
+		self.color = 'blue'
 		
 		space.add(self.shape)
 	def draw(self, cam):
 		pos = self.shape.offset.rotated(self.shape.body.angle) + self.shape.body.position
-		pygame.draw.circle(cam.screen, "blue", cam.conv_coord(pos), int(cam.r*self.shape.radius))
+		pygame.draw.circle(cam.screen, self.color, cam.conv_coord(pos), int(cam.r*self.shape.radius))
 class PolyShape(Shape):
 	def __init__(self, space,body, pnts, m):
 		self.shape = pymunk.Poly(body, pnts)
 		self.shape.mass = m
 		self.shape.friction = 1
 		self.shape.elasticity = 0.7
+		self.color = 'blue'
 		
 		space.add(self.shape)
-	
 	def draw(self, cam):
 		pnts = []
 		for v in self.shape.get_vertices():
 			pos = v.rotated(self.shape.body.angle) + self.shape.body.position
 			pnts.append(cam.conv_coord(pos))
-		pygame.draw.polygon(cam.screen, "blue", pnts)
+		pygame.draw.polygon(cam.screen, self.color, pnts)
 class RectShape(PolyShape):
 	def __init__(self, space,body, w,h, m):
 		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
@@ -94,27 +95,22 @@ class Target:
 		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), max(1,int(0.05*cam.r)))
 	def drawmini(self, cam):
 		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
+
 class Rocket:
-	def __init__(self, space, w,h):
+	def __init__(self, space, angle=0):
 		self.set_targets([])
 		
 		self.controller = None
 		self.auto = True
 		
 		self.body = pymunk.Body()
-		space.add(self.body)
+		self.space = space
+		self.space.add(self.body)
 		
-		self.hull = RectShape(space,self.body, w,h, 10)
-		self.props = [RectShape(space,self.body, h/2,w/2, 1), RectShape(space,self.body, h/2,w/2, 1)]
-		
-		self.forcepos = [(-3/4*w, -h/2),(3/4*w, -h/2)]
-		self.forceangle = [pi/2,pi/2]
 		self.refresh_applied_f()
 		
-		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
-			self.props[i].shape.get_vertices(),
-			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i])
-		)
+		self.forceangle = [pi/2-angle, pi/2+angle]
+		self.forcepos = [0,0]	
 	
 	def set_pos(self, pos):
 		self.body.position = pos
@@ -212,6 +208,35 @@ class Rocket:
 		t = Transform.rotation(-self.get_angle())
 		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
 		pygame.draw.polygon(cam.screen, "green", pnts)
+class Rocket_theo1(Rocket):
+	def __init__(self, *args, **kwargs):
+		Rocket.__init__(self, *args, **kwargs)
+		
+		self.hull = PolyShape(self.space,self.body, [(-0.25,0.),(-0.1875,0.25),(0.,0.5),(0.1875,0.25),(0.25,0.),(0.25,-0.5),(-0.25,-0.5)], 10)
+		self.props = [
+			PolyShape(self.space,self.body, [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)], 1), 
+			PolyShape(self.space,self.body, [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)], 1)
+		]
+		
+		self.forcepos = [(-0.25, -0.5),(0.25, -0.5)]
+		
+		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
+			self.props[i].shape.get_vertices(),
+			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i] -pi/2)
+		)
+class Rocket_alix1(Rocket):
+	def __init__(self, w,h, *args, **kwargs):
+		Rocket.__init__(self, *args, **kwargs)
+		
+		self.hull = RectShape(self.space,self.body, w,h, 10)
+		self.props = [RectShape(self.space,self.body, h/2,w/2, 1), RectShape(self.space,self.body, h/2,w/2, 1)]
+		
+		self.forcepos = [(-3/4*w, -h/2),(3/4*w, -h/2)]
+		
+		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
+			self.props[i].shape.get_vertices(),
+			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i])
+		)
 
 class GUI : pass
 class LevelBar(GUI):
@@ -302,8 +327,8 @@ def main_manual():
 	space.gravity = (0.0, -9.81)
 	
 	rockets = [
-		Rocket(space, 0.5, 1).set_pos(Vec2d(i,5)).set_controller(Controller_alix1()) \
-		for i in range(1)
+		Rocket_alix1(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controller(Controller_alix1()),
+		Rocket_theo1(space, pi/8).set_pos(Vec2d(2,5)).set_controller(Controller_alix1())
 	]
 	rind = 0 # focused rocket index
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
