@@ -248,14 +248,20 @@ class Controller_alix1(Controller):
 		fx = self.sys1.compute({'errx': err.x/5, 'velx': vel.x/5}, 'fx')
 		fy = self.sys2.compute({'erry': err.y/1, 'vely': vel.y/5}, 'fy')
 		
-		fa = math.atan2(abs(fy),fx)
-		erra = rangle - fa
-		if erra > pi : erra = -(2*pi - erra) # [-pi,pi] range
-		r1 = self.sys3.compute({'erra': erra/pi*4, 'vela': rvel/pi/1}) # rotate towards angle
-		
 		f1 = Vec2d(fx, fy) # force to target
 		f2 = Vec2d(cos(rangle), sin(rangle)) # rocket dir
-		thrust = max(0, f1.dot(f2)) * 200
+		f3 = Vec2d(0, 1) # vertical
+		
+		# which angle should rocket turn towards ?
+		ftot = f1.normalized() + f3.normalized()*4 # which is more important : staying vertical or going towards target ?
+		fa = math.atan2(abs(ftot.y),ftot.x) # don't turn towards -y
+		
+		erra = rangle - fa
+		if erra > pi : erra = -(2*pi - erra) # [-pi, pi] range
+		erra = fz.clamp(-pi/5, erra, pi/5) # [-pi/5, pi/5] range
+		r1 = self.sys3.compute({'erra': erra/(2/5*pi), 'vela': rvel/10}) # rotate towards angle
+		
+		thrust = max(0, f1.dot(f2)) * 200 # more thrust if rocket is facing target
 		
 		f = Vec2d(1,1)*thrust + Vec2d(r1['fl'], r1['fr'])*200
 		return (f.x,f.y)
@@ -269,13 +275,13 @@ def main_manual():
 	
 	rockets = [
 		Rocket(space, 0.5, 1).set_pos(Vec2d(i,5)).set_controller(Controller_alix1()) \
-		for i in range(3)
+		for i in range(1)
 	]
 	rind = 0 # focused rocket index
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
 	
 	waypoints = [(2,0),(8,8),(-5, -10)]
-	targets = [ Target(Vec2d(*p), 2, 4) for p in waypoints]
+	targets = [ Target(Vec2d(*p), 1, 4) for p in waypoints]
 	for rocket in rockets : rocket.set_targets(targets)
 	
 	cage_w = 40 ; cage_h = 30
@@ -312,7 +318,7 @@ def main_manual():
 			
 			# get key events (no repeats)
 			elif event.type == pygame.KEYDOWN:
-				if event.key == pygame.K_r   : rockets[rind].set_pos(Vec2d(5,5)).stop() # reset rocket
+				if   event.key == pygame.K_r : rockets[rind].set_pos(Vec2d(5,5)).stop() # reset rocket
 				elif event.key == pygame.K_a : rockets[rind].auto = not rockets[rind].auto # toggle auto control
 				elif event.key == pygame.K_i : maincam.r *= 120/100 # zoom in
 				elif event.key == pygame.K_o : maincam.r *= 80/100 # zoom out
