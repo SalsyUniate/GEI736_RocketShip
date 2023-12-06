@@ -61,7 +61,6 @@ class RectShape(PolyShape):
 	def __init__(self, space,body, w,h, m):
 		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
 		PolyShape.__init__(self, space,body, pnts, m)
-
 def shapeBody(ShapeClass, space, *args, **kwargs):
 	body = pymunk.Body()
 	space.add(body)
@@ -92,10 +91,9 @@ class Target:
 		self.r = r
 		self.dt = dt
 	def draw(self, cam):
-		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), 10)
+		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), max(1,int(0.05*cam.r)))
 	def drawmini(self, cam):
 		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
-
 class Rocket:
 	def __init__(self, space, w,h):
 		self.set_targets([])
@@ -111,6 +109,7 @@ class Rocket:
 		
 		self.forcepos = [(-3/4*w, -h/2),(3/4*w, -h/2)]
 		self.forceangle = [pi/2,pi/2]
+		self.refresh_applied_f()
 		
 		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
 			self.props[i].shape.get_vertices(),
@@ -149,9 +148,18 @@ class Rocket:
 		self.body.apply_force_at_local_point(Vec2d(-rot/2,0), Vec2d(0, 1))
 	def apply_force(self, l, r):
 		l = max(0,l) ; r = max(0,r) # only positive forces
-		self.body.apply_force_at_local_point( (cos(self.forceangle[0])*l, sin(self.forceangle[0])*l), self.forcepos[0] )
-		self.body.apply_force_at_local_point( (cos(self.forceangle[1])*r, sin(self.forceangle[1])*r), self.forcepos[1] )
+		fl = Vec2d( cos(self.forceangle[0])*l, sin(self.forceangle[0])*l )
+		fr = Vec2d( cos(self.forceangle[1])*r, sin(self.forceangle[1])*r )
+		
+		self.body.apply_force_at_local_point(fl, self.forcepos[0] )
+		self.body.apply_force_at_local_point(fr, self.forcepos[1] )
+		
+		self.applied_f[0] += fl
+		self.applied_f[1] += fr
+		
 		return self
+	def refresh_applied_f(self):
+		self.applied_f = [Vec2d(0,0), Vec2d(0,0)] # left, right
 	def stop(self):
 		self.set_angle(0)
 		self.set_linvel(Vec2d(0,0))
@@ -204,6 +212,25 @@ class Rocket:
 		t = Transform.rotation(-self.get_angle())
 		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
 		pygame.draw.polygon(cam.screen, "green", pnts)
+
+class GUI : pass
+class LevelBar(GUI):
+	def __init__(self, w,h, x,y, maxl):
+		self.w = w; self.h = h;
+		self.x = x; self.y = y;
+		
+		self.maxl = maxl
+		self.l = 0
+	
+	def draw(self, cam):
+		x,w = [self.x*cam.sz[0], self.w*cam.sz[0]]
+		y,h = [self.y*cam.sz[1], self.h*cam.sz[1]]
+		bgsz = 10 # px
+		wbg,hbg = [w+bgsz, h+bgsz]
+		pygame.draw.rect(cam.screen, "black", [int(v) for v in [x-wbg/2, y-hbg/2, wbg, hbg]]) # bg
+		# modify full height depending on level
+		htmp  = self.l * h / self.maxl
+		pygame.draw.rect(cam.screen, "cyan", [int(v) for v in [x-w/2, y+h/2-htmp, w, htmp]]) # color bar
 
 # Fuzzy controllers
 class Controller : pass
@@ -266,6 +293,7 @@ class Controller_alix1(Controller):
 		f = Vec2d(1,1)*thrust + Vec2d(r1['fl'], r1['fr'])*200
 		return (f.x,f.y)
 
+# graphics + physics loop (interactive)
 def main_manual():
 	global pxPerM
 	
@@ -287,7 +315,7 @@ def main_manual():
 	cage_w = 40 ; cage_h = 30
 	ground = Ground(space, [(-cage_w/2,cage_h/2),(-cage_w/2,-cage_h/2),(cage_w/2,-cage_h/2),(cage_w/2,cage_h/2),(-cage_w/2,cage_h/2)])
 	
-	objects = [ground, *rockets, *targets]
+	physObjects = [ground, *rockets, *targets]
 	# -----------------------------------------------------------------------------------------------------------
 	
 	# Fuzzy control ------------------------------------------------------------------------------------------
@@ -309,9 +337,22 @@ def main_manual():
 	mmcam = Camera(Vec2d(0,0), minimap, pxPerM/40) # minimap camera
 	mmdots = 3 # minimap dot size
 	#minimap.set_alpha(128)
+	
+	thrustbars = [
+		LevelBar(5/100,50/100, 5/100,50/100, 300), # left
+		LevelBar(5/100,50/100, 95/100,50/100, 300) # right
+	]
+	guiObjects = [*thrustbars]
 	# ----------------------------------------------------------------------------------------------------------
 	
 	while True:
+		# physics
+		rocket.apply_damping(2, 2)
+		space.step(1/fps)
+		for rocket in rockets : rocket.refresh_applied_f()
+		
+		rpos = rockets[rind].get_pos()
+		
 		# user events
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT : sys.exit(0)
@@ -328,12 +369,6 @@ def main_manual():
 		if keys[pygame.K_LEFT]   : rockets[rind].apply_force(100,0)
 		if keys[pygame.K_RIGHT]  : rockets[rind].apply_force(0,100)
 		
-		# physics
-		rocket.apply_damping(2, 2)
-		space.step(1/fps)
-		
-		rpos = rockets[rind].get_pos()
-		
 		# controller
 		for rocket in rockets:
 			rocket.update_target(time())
@@ -342,18 +377,20 @@ def main_manual():
 		# graphics
 		screen.fill((255,255,255))
 		
+		applied_f = rockets[rind].applied_f
+		for i in [0,1] : thrustbars[i].l = applied_f[i].length
+		
 		maincam.pos = rpos
-		for obj in objects : obj.draw(maincam)
+		for obj in physObjects+guiObjects : obj.draw(maincam)
 		
 		# minimap
 		minimap.fill((128,128,128))
-		for obj in objects : obj.drawmini(mmcam)
+		for obj in physObjects : obj.drawmini(mmcam)
 		screen.blit(minimap, (10,ws[1]-(mms[1]+10))) 
 		
 		pygame.display.flip()
 		clock.tick(fps)
-
-# try to evolve a full controller using GA
+# physics loop (non-interactive, for training)
 def main_training_all():
 	space = pymunk.Space()
 	space.gravity = (0.0, 9.81)
