@@ -188,8 +188,8 @@ class Rocket:
 	def in_target(self):
 		return (self.body.position - self.goal.pos).length <= self.goal.r
 	def on_platform(self):
-		err = self.get_pos() - self.goal.pos
-		return err.y >= 0 and err.length < 1e-2 and self.get_linvel().length < 1e-2
+		contacts = self.props[0].shape.shapes_collide(self.goal.segments[0]).points + self.props[1].shape.shapes_collide(self.goal.segments[0]).points
+		return len(contacts) != 0 and self.get_linvel().length < 1e-2
 	def update_goal(self, dt):
 		if not self.in_goal() : self.lastT = None
 		else:
@@ -354,12 +354,11 @@ class Controller_platform_alix1(Controller_platform):
 	def __init__(self):
 		self.c = Controller_target_alix1()
 	def action(self, rpos,vel,rangle,rvel, pos,w):
-		margin = 0.6
+		margin = 0.4
 		err = rpos - pos
 		
-		if err.y > margin/2:
-			if abs(err.x) < 1e-2 : target = pos + Vec2d(0, 0.1)
-			else                 : target = pos + Vec2d(0, margin)
+		if abs(err.x) < 1e-1 and err.y > 0 : return (0,0) # do nothing
+		elif err.y > margin/2 : target = pos + Vec2d(0, margin)
 		else :
 			if err.x > margin/2   : target = pos + Vec2d(w/2 + margin, margin)
 			elif err.x < margin/2 : target = pos + Vec2d(-w/2 - margin, margin)
@@ -382,16 +381,16 @@ def main_manual():
 		Platform: Controller_platform_alix1()
 	}
 	rockets = [
-		#Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix),
+		Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix),
 		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix)
 	]
 	rind = 0 # focused rocket index
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
 	
-	waypoints = [(2,0),]#(8,8),(-5, -10)]
+	waypoints = [(2,0),(8,8),(-5, -10)]
 	goals = [
+		Platform(space, Vec2d(-8, -5), 3, 4),
 		*[Target(Vec2d(*p), 1, 4) for p in waypoints],
-		Platform(space, Vec2d(-8, -5), 3, 4)
 	]
 	for rocket in rockets : rocket.set_goals(goals)
 	
