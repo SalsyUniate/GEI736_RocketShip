@@ -208,12 +208,22 @@ class Rocket:
 		goal = self.goals[self.tind]
 		
 		if isinstance(goal, Target):
-			fl, fr = self.controllers[Target].action(
-				self.get_pos_b() - goal.pos,
-				self.get_linvel(),
-				self.get_angle() + pi/2, # [0, 2pi]
-				self.get_rotvel(),
-			)
+			if isinstance(self.controllers[Target], Controller_target_2):
+				fl, fr = self.controllers[Target].action(
+					self.get_pos_b().x - goal.pos.x,
+					self.get_linvel().x,
+					self.get_pos_b().y - goal.pos.y,
+					self.get_linvel().y,
+					self.get_angle(),
+					self.get_rotvel(),
+				)
+			else:
+				fl, fr = self.controllers[Target].action(
+					self.get_pos_b() - goal.pos,
+					self.get_linvel(),
+					self.get_angle() + pi/2, # [0, 2pi]
+					self.get_rotvel(),
+				)
 		elif isinstance(goal, Platform):
 			fl, fr = self.controllers[Platform].action(
 				self.get_pos_b(),
@@ -367,6 +377,179 @@ class Controller_platform_alix1(Controller_platform):
 				elif err.x < 0 : target = pos + Vec2d(-w/2 - margin, -margin)
 		
 		return self.c.action(rpos-target,vel,rangle,rvel)
+	
+class Controller_target_2(Controller_platform):
+	def __init__(self):
+		THROTLE_MAX = 175
+
+		x_rules_gauche = [
+			[3, 2, 1, 1, 1],
+			[2, 1, 1, 1, 1],
+			[1, 1, 0, 0, 0],
+			[0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0]
+		]
+
+		x_rules_droit = [
+			[0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0],
+			[0, 0, 0, 1, 1],
+			[1, 1, 1, 2, 2],
+			[1, 1, 1, 2, 3]
+		]
+
+		theta_rules_gauche = [
+			[0, 0, 0, 0, 1],
+			[0, 0, 0, 0, 1],
+			[0, 0, 0, 1, 2],
+			[0, 0, 1, 1, 2],
+			[0, 1, 1, 2, 3]
+		]
+
+		theta_rules_droit = [
+			[3, 2, 1, 1, 0],
+			[2, 1, 1, 0, 0],
+			[2, 1, 0, 0, 0],
+			[1, 0, 0, 0, 0],
+			[1, 0, 0, 0, 0]
+		]
+
+		y_rules_gauche = [
+			[2, 2, 2, 2, 3],
+			[2, 2, 2, 2, 3],
+			[2, 2, 2, 2, 3],
+			[2, 2, 2, 2, 3],
+			[2, 2, 3, 3, 3]
+		]
+
+		y_rules_droit = y_rules_gauche
+
+		rule_sets = {
+			
+			'err_x': fz.SetTrig.autoN(5, -5, 5, True, 'err_x'),
+			'derr_x': fz.SetTrig.autoN(5, -15, 15, True, 'derr_x'),
+
+			'err_theta': fz.SetTrig.autoN(5, -pi/2, pi/2, True, 'err_theta'),
+			'derr_theta': fz.SetTrig.autoN(5, -pi, pi, True, 'derr_theta'),
+
+			'err_y': fz.SetTrig.autoN(5, -1, 1, True, 'err_y'),
+			'derr_y': fz.SetTrig.autoN(5, -10, 10, True, 'derr_y'),
+
+			'force_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_gauche'),
+			'force_droite': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_droite')
+		}
+
+		#X
+		f_rules_x_gauche = [ fz.Rule(fz.AND(rule_sets['err_x'][err_i],rule_sets['derr_x'][derr_i]), rule_sets['force_gauche'][x_rules_gauche[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.x_gauche = fz.System(f_rules_x_gauche)
+
+		f_rules_x_droit = [ fz.Rule(fz.AND(rule_sets['err_x'][err_i],rule_sets['derr_x'][derr_i]), rule_sets['force_droite'][x_rules_droit[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.x_droit = fz.System(f_rules_x_droit)
+
+		#Theta
+		f_rules_theta_gauche = [ fz.Rule(fz.AND(rule_sets['err_theta'][err_i],rule_sets['derr_theta'][derr_i]), rule_sets['force_gauche'][theta_rules_gauche[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.theta_gauche = fz.System(f_rules_theta_gauche)
+
+		f_rules_theta_droit = [ fz.Rule(fz.AND(rule_sets['err_theta'][err_i],rule_sets['derr_theta'][derr_i]), rule_sets['force_droite'][theta_rules_droit[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.theta_droit = fz.System(f_rules_theta_droit)
+
+		#Y
+		f_rules_y_gauche = [ fz.Rule(fz.AND(rule_sets['err_y'][err_i],rule_sets['derr_y'][derr_i]), rule_sets['force_gauche'][y_rules_gauche[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.y_gauche = fz.System(f_rules_y_gauche)
+
+		f_rules_y_droit = [ fz.Rule(fz.AND(rule_sets['err_y'][err_i],rule_sets['derr_y'][derr_i]), rule_sets['force_droite'][y_rules_droit[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.y_droit = fz.System(f_rules_y_droit)
+
+
+
+		x_theta_rules_gauche = [
+			[0, 1, 2, 2],
+			[0, 1, 2, 3],
+			[1, 2, 2, 3],
+			[2, 3, 3, 3]
+		]
+
+		"""
+		x_theta_rules_droit = [
+			[3, 3, 2, 2],
+			[3, 2, 2, 1],
+			[2, 2, 1, 0],
+			[2, 1, 0, 0]
+		]
+		"""
+		x_theta_rules_droit = x_theta_rules_gauche
+
+		rule_sets_x_theta = {
+			'x_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'x_gauche'),
+			'theta_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'theta_gauche'),
+			
+			'x_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'x_droit'),
+			'theta_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'theta_droit'),
+
+			
+			'force_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_gauche'),
+			'force_droite': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_droite')
+		}
+
+		
+		f_rules_xtheta_gauche = [ fz.Rule(fz.AND(rule_sets_x_theta['x_gauche'][x_i],rule_sets_x_theta['theta_gauche'][theta_i]), rule_sets_x_theta['force_gauche'][x_theta_rules_gauche[x_i][theta_i]]) for x_i in range(4) for theta_i in range(4) ]
+		self.xtheta_gauche = fz.System(f_rules_xtheta_gauche)
+
+		f_rules_xtheta_droit = [ fz.Rule(fz.AND(rule_sets_x_theta['x_droit'][x_i],rule_sets_x_theta['theta_droit'][theta_i]), rule_sets_x_theta['force_droite'][x_theta_rules_droit[x_i][theta_i]]) for x_i in range(4) for theta_i in range(4) ]
+		self.xtheta_droit = fz.System(f_rules_xtheta_droit)
+
+
+		xtheta_y_rules_gauche = [
+			[1, 2, 2, 3],
+			[2, 2, 3, 4],
+			[3, 4, 4, 5],
+			[4, 4, 5, 6]
+		]
+
+		xtheta_y_rules_droit = xtheta_y_rules_gauche
+
+		rule_sets_xtheta_y = {
+			'xtheta_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'xtheta_gauche'),
+			'y_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'y_gauche'),
+			
+			'xtheta_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'xtheta_droit'),
+			'y_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'y_droit'),
+
+			
+			'force_gauche': fz.SetTrig.autoN(7, 0, THROTLE_MAX, False, 'force_gauche'),
+			'force_droite': fz.SetTrig.autoN(7, 0, THROTLE_MAX, False, 'force_droite')
+		}
+
+		f_rules_gauche = [ fz.Rule(fz.AND(rule_sets_xtheta_y['xtheta_gauche'][xtheta_i],rule_sets_xtheta_y['y_gauche'][y_i]), rule_sets_xtheta_y['force_gauche'][xtheta_y_rules_gauche[xtheta_i][y_i]]) for xtheta_i in range(4) for y_i in range(4) ]
+		self.gauche = fz.System(f_rules_gauche)
+
+		f_rules_droit = [ fz.Rule(fz.AND(rule_sets_xtheta_y['xtheta_droit'][xtheta_i],rule_sets_xtheta_y['y_droit'][y_i]), rule_sets_xtheta_y['force_droite'][xtheta_y_rules_droit[xtheta_i][y_i]]) for xtheta_i in range(4) for y_i in range(4) ]
+		self.droit = fz.System(f_rules_droit)
+
+	def action(self, x, dx, y, dy, theta, dtheta):
+		theta = theta % (2*pi)
+		if(theta > pi): theta = theta - 2*pi
+		y = -y
+
+		x_gauche = self.x_gauche.compute({'err_x': x, 'derr_x': dx}, tag = 'force_gauche') * 1.25
+		x_droit = self.x_droit.compute({'err_x': x, 'derr_x': dx}, tag = 'force_droite') * 1.25
+		
+		theta_gauche = self.theta_gauche.compute({'err_theta': theta, 'derr_theta': dtheta}, tag = 'force_gauche')
+		theta_droit = self.theta_droit.compute({'err_theta': theta, 'derr_theta': dtheta}, tag = 'force_droite')
+		
+		y_gauche = self.y_gauche.compute({'err_y': y, 'derr_y': dy}, tag = 'force_gauche') * 0.75
+		y_droit = self.y_droit.compute({'err_y': y, 'derr_y': dy}, tag = 'force_droite') * 0.75
+		
+		xtheta_gauche = self.xtheta_gauche.compute({'x_gauche': x_gauche, 'theta_gauche': theta_gauche}, tag = 'force_gauche') * 1.25
+		xtheta_droit = self.xtheta_droit.compute({'x_droit': x_droit, 'theta_droit': theta_droit}, tag = 'force_droite') * 1.25
+		
+		force_gauche = self.gauche.compute({'xtheta_gauche': xtheta_gauche, 'y_gauche': y_gauche}, tag = 'force_gauche')
+		force_droite = self.droit.compute({'xtheta_droit': xtheta_droit, 'y_droit': y_droit}, tag = 'force_droite')
+		
+		if(theta > pi / 2): force_droite = 0
+		if(theta < -pi / 2): force_gauche = 0
+
+		return (force_gauche, force_droite)
 
 # graphics + physics loop (interactive)
 def main_manual():
@@ -380,11 +563,18 @@ def main_manual():
 		Target: Controller_target_alix1(),
 		Platform: Controller_platform_alix1()
 	}
+
+	controllers_2 = {
+		Target: Controller_target_2(),
+		Platform: Controller_platform_alix1()
+	}
+
 	rockets = [
 		Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix),
-		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix)
+		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix),
+		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_2)
 	]
-	rind = 0 # focused rocket index
+	rind = 2 # focused rocket index
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
 	
 	waypoints = [(2,0),(8,8),(-5, -10)]
