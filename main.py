@@ -76,29 +76,40 @@ class Ground:
 			seg.friction = 1
 		
 		# for the graphics
-		self.pnts = [Vec2d(*pnt) for pnt in pnts]
+		self.pnts = [*pnts]
 		self.thick = thick
+		self.color = "black"
 		
 		space.add(*self.segments)
 	
 	def draw(self, cam):
-		pygame.draw.lines(cam.screen, "black", False, [cam.conv_coord(pnt) for pnt in self.pnts], int(pxPerM*self.thick*2))
+		pygame.draw.lines(cam.screen, self.color, False, [cam.conv_coord(pnt) for pnt in self.pnts], int(pxPerM*self.thick*2))
 	def drawmini(self, cam):
-		pygame.draw.lines(cam.screen, "black", False, [cam.conv_coord(pnt) for pnt in self.pnts], 3)
+		pygame.draw.lines(cam.screen, self.color, False, [cam.conv_coord(pnt) for pnt in self.pnts], 3)
 
-class Target:
+class Goal : pass
+class Target(Goal):
 	def __init__(self, pos, r, dt):
 		self.pos = pos
 		self.r = r
 		self.dt = dt
 	def draw(self, cam):
+		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(0.1*cam.r))
 		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), max(1,int(0.05*cam.r)))
 	def drawmini(self, cam):
 		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
+class Platform(Goal, Ground):
+	def __init__(self, space, pos, w, dt):
+		Ground.__init__(self, space, [pos-Vec2d(w/2,0), pos+Vec2d(w/2,0)])
+		self.pos = pos
+		self.w = w
+		self.dt = dt
+		
+		self.color = "red"	
 
 class Rocket:
 	def __init__(self, space, angle=0):
-		self.set_targets([])
+		self.set_goals([])
 		
 		self.controller = None
 		self.auto = True
@@ -129,6 +140,8 @@ class Rocket:
 	
 	def get_pos(self):
 		return self.body.position
+	def get_pos_b(self): # bottom of rocket
+		return self.body.local_to_world(self.bottom)
 	def get_angle(self):
 		return self.body.angle % (2*pi)
 	def get_linvel(self):
@@ -162,37 +175,55 @@ class Rocket:
 		self.set_rotvel(0)
 		return self
 	
-	def set_targets(self, targets):
-		self.targets = targets
+	def set_goals(self, goals):
+		self.goals = goals
 		self.tind = 0 # current target index
-		self.target = None if len(self.targets) == 0 else self.targets[0] # current target
+		self.goal = None if len(self.goals) == 0 else self.goals[0] # current target
 		self.lastT = None # target start time
+	def in_goal(self):
+		if self.goal is None : return False
+		
+		if isinstance(self.goal, Target)     : return self.in_target()
+		elif isinstance(self.goal, Platform) : return self.on_platform()
 	def in_target(self):
-		if self.target is None : return False
-		return (self.body.position - self.target.pos).length <= self.target.r
-	def update_target(self, dt):
-		if not self.in_target() : self.lastT = None
+		return (self.body.position - self.goal.pos).length <= self.goal.r
+	def on_platform(self):
+		err = self.get_pos() - self.goal.pos
+		return err.y >= 0 and err.length < 1e-2 and self.get_linvel().length < 1e-2
+	def update_goal(self, dt):
+		if not self.in_goal() : self.lastT = None
 		else:
 			if self.lastT is None : self.lastT = dt
-			elif dt - self.lastT >= self.target.dt:
+			elif dt - self.lastT >= self.goal.dt:
 				self.lastT = 0
-				self.tind = min(self.tind+1, len(self.targets)-1)
-				self.target = self.targets[self.tind]
+				self.tind = min(self.tind+1, len(self.goals)-1)
+				self.goal = self.goals[self.tind]
 	
-	def set_controller(self, controller):
-		self.controller = controller
+	def set_controllers(self, controllers):
+		self.controllers = controllers
 		return self
 	def apply_control(self):
 		if not self.auto : return
 		
-		target = self.targets[self.tind]
+		goal = self.goals[self.tind]
 		
-		fl, fr = self.controller.action(
-			self.get_pos() - target.pos,
-			self.get_linvel(),
-			self.get_angle() + pi/2, # [0, 2pi]
-			self.get_rotvel(),
-		)
+		if isinstance(goal, Target):
+			fl, fr = self.controllers[Target].action(
+				self.get_pos_b() - goal.pos,
+				self.get_linvel(),
+				self.get_angle() + pi/2, # [0, 2pi]
+				self.get_rotvel(),
+			)
+		elif isinstance(goal, Platform):
+			fl, fr = self.controllers[Platform].action(
+				self.get_pos_b(),
+				self.get_linvel(),
+				self.get_angle() + pi/2, # [0, 2pi]
+				self.get_rotvel(),
+				
+				goal.pos, goal.w
+			)
+		
 		self.apply_force(fl, fr)
 	
 	def draw_arrow(self, cam, p, color):
@@ -208,7 +239,7 @@ class Rocket:
 		t = Transform.rotation(-self.get_angle())
 		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
 		pygame.draw.polygon(cam.screen, "green", pnts)
-class Rocket_theo1(Rocket):
+class Rocket_fancy(Rocket):
 	def __init__(self, *args, **kwargs):
 		Rocket.__init__(self, *args, **kwargs)
 		
@@ -219,12 +250,13 @@ class Rocket_theo1(Rocket):
 		]
 		
 		self.forcepos = [(-0.25, -0.5),(0.25, -0.5)]
+		self.bottom = Vec2d(0, -0.5)
 		
 		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
 			self.props[i].shape.get_vertices(),
 			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i] -pi/2)
 		)
-class Rocket_alix1(Rocket):
+class Rocket_basic(Rocket):
 	def __init__(self, w,h, *args, **kwargs):
 		Rocket.__init__(self, *args, **kwargs)
 		
@@ -232,6 +264,7 @@ class Rocket_alix1(Rocket):
 		self.props = [RectShape(self.space,self.body, h/2,w/2, 1), RectShape(self.space,self.body, h/2,w/2, 1)]
 		
 		self.forcepos = [(-3/4*w, -h/2),(3/4*w, -h/2)]
+		self.bottom = Vec2d(0, -h/2)
 		
 		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
 			self.props[i].shape.get_vertices(),
@@ -258,10 +291,10 @@ class LevelBar(GUI):
 		pygame.draw.rect(cam.screen, "cyan", [int(v) for v in [x-w/2, y+h/2-htmp, w, htmp]]) # color bar
 
 # Fuzzy controllers
-class Controller : pass
-class Controller_alix1(Controller):
+class Controller_target : pass
+class Controller_platform : pass
+class Controller_target_alix1(Controller_target):
 	def __init__(self):
-		
 		nbsets = 5 # impaire
 		mset = nbsets//2 # index of middle set
 		# system (1) :: X -> force X
@@ -294,11 +327,11 @@ class Controller_alix1(Controller):
 					fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fr[indR])
 				]
 		self.sys3 = fz.System(rules3)
-		
+	
 	# must return (thrust left ; thrust right)
 	def action(self, err,vel,rangle,rvel):
 		fx = self.sys1.compute({'errx': err.x/5, 'velx': vel.x/5}, 'fx')
-		fy = self.sys2.compute({'erry': err.y/1, 'vely': vel.y/5}, 'fy')
+		fy = self.sys2.compute({'erry': err.y*3, 'vely': vel.y/3}, 'fy')
 		
 		f1 = Vec2d(fx, fy) # force to target
 		f2 = Vec2d(cos(rangle), sin(rangle)) # rocket dir
@@ -313,10 +346,28 @@ class Controller_alix1(Controller):
 		erra = fz.clamp(-pi/5, erra, pi/5) # [-pi/5, pi/5] range
 		r1 = self.sys3.compute({'erra': erra/(2/5*pi), 'vela': rvel/10}) # rotate towards angle
 		
-		thrust = max(0, f1.dot(f2)) * 200 # more thrust if rocket is facing target
+		thrust = max(0, f1.dot(f2)) * 250 # more thrust if rocket is facing target
 		
 		f = Vec2d(1,1)*thrust + Vec2d(r1['fl'], r1['fr'])*200
 		return (f.x,f.y)
+class Controller_platform_alix1(Controller_platform):
+	def __init__(self):
+		self.c = Controller_target_alix1()
+	def action(self, rpos,vel,rangle,rvel, pos,w):
+		margin = 0.6
+		err = rpos - pos
+		
+		if err.y > margin/2:
+			if abs(err.x) < 1e-2 : target = pos + Vec2d(0, 0.1)
+			else                 : target = pos + Vec2d(0, margin)
+		else :
+			if err.x > margin/2   : target = pos + Vec2d(w/2 + margin, margin)
+			elif err.x < margin/2 : target = pos + Vec2d(-w/2 - margin, margin)
+			else:
+				if err.x > 0   : target = pos + Vec2d(w/2 + margin, -margin)
+				elif err.x < 0 : target = pos + Vec2d(-w/2 - margin, -margin)
+		
+		return self.c.action(rpos-target,vel,rangle,rvel)
 
 # graphics + physics loop (interactive)
 def main_manual():
@@ -326,25 +377,32 @@ def main_manual():
 	space = pymunk.Space()
 	space.gravity = (0.0, -9.81)
 	
+	controllers_alix = {
+		Target: Controller_target_alix1(),
+		Platform: Controller_platform_alix1()
+	}
 	rockets = [
-		Rocket_alix1(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controller(Controller_alix1()),
-		Rocket_theo1(space, pi/8).set_pos(Vec2d(2,5)).set_controller(Controller_alix1())
+		#Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix),
+		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix)
 	]
 	rind = 0 # focused rocket index
 	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
 	
-	waypoints = [(2,0),(8,8),(-5, -10)]
-	targets = [ Target(Vec2d(*p), 1, 4) for p in waypoints]
-	for rocket in rockets : rocket.set_targets(targets)
+	waypoints = [(2,0),]#(8,8),(-5, -10)]
+	goals = [
+		*[Target(Vec2d(*p), 1, 4) for p in waypoints],
+		Platform(space, Vec2d(-8, -5), 3, 4)
+	]
+	for rocket in rockets : rocket.set_goals(goals)
 	
 	cage_w = 40 ; cage_h = 30
-	ground = Ground(space, [(-cage_w/2,cage_h/2),(-cage_w/2,-cage_h/2),(cage_w/2,-cage_h/2),(cage_w/2,cage_h/2),(-cage_w/2,cage_h/2)])
+	cage_pnts = [(-cage_w/2,cage_h/2),(-cage_w/2,-cage_h/2),(cage_w/2,-cage_h/2),(cage_w/2,cage_h/2),(-cage_w/2,cage_h/2)]
+	grounds = [
+		Ground(space, [Vec2d(*p) for p in cage_pnts]), # cage
+	]
 	
-	physObjects = [ground, *rockets, *targets]
+	physObjects = [*grounds, *goals, *rockets]
 	# -----------------------------------------------------------------------------------------------------------
-	
-	# Fuzzy control ------------------------------------------------------------------------------------------
-	# ---------------------------------------------------------------------------------------------------------
 	
 	# Graphics init -------------------------------------------------------------------------------------------
 	ws = (1000, 600) # screen dimensions in pixels
@@ -360,7 +418,6 @@ def main_manual():
 	mms = (ws[0]/5, ws[1]/5)
 	minimap = pygame.Surface(mms)
 	mmcam = Camera(Vec2d(0,0), minimap, pxPerM/40) # minimap camera
-	mmdots = 3 # minimap dot size
 	#minimap.set_alpha(128)
 	
 	thrustbars = [
@@ -396,7 +453,7 @@ def main_manual():
 		
 		# controller
 		for rocket in rockets:
-			rocket.update_target(time())
+			rocket.update_goal(time())
 			rocket.apply_control()
 		
 		# graphics
