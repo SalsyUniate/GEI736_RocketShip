@@ -118,7 +118,7 @@ class Platform(Goal, Ground):
 		self.color = "red"	
 
 class Rocket:
-	def __init__(self, space, angle=0):
+	def __init__(self, space, angle=0,color="blue"):
 		self.set_goals([])
 		
 		self.controller = None
@@ -130,8 +130,9 @@ class Rocket:
 		
 		self.refresh_applied_f()
 		
-		self.forceangle = [pi/2-angle, pi/2+angle]
-		self.forcepos = [0,0]	
+		self.forcepos = [0,0]
+		
+		self.color = color
 	
 	def set_pos(self, pos):
 		self.body.position = pos
@@ -183,6 +184,8 @@ class Rocket:
 		return self
 	def refresh_applied_f(self):
 		self.applied_f = [Vec2d(0,0), Vec2d(0,0)] # left, right
+	def apply_perturbation(self, vmax):
+		self.apply_force(random.uniform(0,vmax), random.uniform(0,vmax))
 	def stop(self):
 		self.set_angle(0)
 		self.set_linvel(Vec2d(0,0))
@@ -193,6 +196,7 @@ class Rocket:
 		self.stop()
 		self.refresh_applied_f()
 		self.set_goals(self.goals)
+		self.set_pos(Vec2d(0,0))
 	
 	def set_goals(self, goals):
 		self.goals = goals
@@ -228,19 +232,19 @@ class Rocket:
 		
 		if isinstance(goal, Target):
 			fl, fr = self.controllers[Target].action(
-				self.get_pos_b() - goal.pos,
+				goal.pos,
+				self.get_pos_b(),
 				self.get_linvel(),
-				self.get_angle() + pi/2, # [0, 2pi]
+				self.get_angle(),
 				self.get_rotvel(),
 			)
 		elif isinstance(goal, Platform):
 			fl, fr = self.controllers[Platform].action(
+				goal.pos, goal.w,
 				self.get_pos_b(),
 				self.get_linvel(),
-				self.get_angle() + pi/2, # [0, 2pi]
+				self.get_angle(),
 				self.get_rotvel(),
-				
-				goal.pos, goal.w
 			)
 		
 		self.apply_force(fl, fr)
@@ -259,34 +263,32 @@ class Rocket:
 		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
 		pg.draw.polygon(cam.screen, "green", pnts)
 class Rocket_fancy(Rocket):
-	def __init__(self, *args, **kwargs):
-		Rocket.__init__(self, *args, **kwargs)
+	def __init__(self, space, angle=0,color='blue'):
+		Rocket.__init__(self, space,angle,color)
 		
-		hullpnts = [(-0.25,0.),(-0.1875,0.25),(0.,0.5),(0.1875,0.25),(0.25,0.),(0.25,-0.5),(-0.25,-0.5)]
-		proppnts = [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)]
-		self.hull = PolyShape(self.space,self.body, hullpnts, 10)
+		self.hullpnts = [(-0.25,0.),(-0.1875,0.25),(0.,0.5),(0.1875,0.25),(0.25,0.),(0.25,-0.5),(-0.25,-0.5)]
+		self.proppnts = [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)]
+		self.hull = PolyShape(self.space,self.body, self.hullpnts, 10)
 		self.props = [
-			PolyShape(self.space,self.body, proppnts, 1), 
-			PolyShape(self.space,self.body, proppnts, 1)
+			PolyShape(self.space,self.body, self.proppnts, 1), 
+			PolyShape(self.space,self.body, self.proppnts, 1)
 		]
 		
 		self.forcepos = [(-0.25, -0.5),(0.25, -0.5)]
 		self.bottom = Vec2d(0, -0.5)
+		self.orient_props(angle)
 		
+		self.tex = pg.image.load(os.path.join('res', f"rocket_{self.color}.png")).convert_alpha()
+	def orient_props(self, angle):
+		self.forceangle = [pi/2-angle, pi/2+angle]
 		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
-			self.props[i].shape.get_vertices(),
+			self.proppnts,
 			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i] -pi/2)
 		)
-		
-		self.tex = pg.image.load(os.path.join('res', 'rocket2.png')).convert_alpha()
 	def draw(self, cam):
 		
 		# texture support
 		if cam.offscreen is not None:
-			
-			# draw outline
-			self.set_color('red')
-			Rocket.draw(self, cam)
 			
 			# draw mask
 			self.hull.color = 'white'
@@ -306,7 +308,7 @@ class Rocket_fancy(Rocket):
 			
 			# draw red thrusters
 			for prop in self.props:
-				prop.color = 'red'
+				prop.color = self.color
 				prop.draw(cam)
 		
 		# no texture
@@ -314,19 +316,17 @@ class Rocket_fancy(Rocket):
 			self.set_color('blue')
 			Rocket.draw(self, cam)
 class Rocket_basic(Rocket):
-	def __init__(self, w,h, *args, **kwargs):
-		Rocket.__init__(self, *args, **kwargs)
+	def __init__(self, space, w,h, color='blue'):
+		Rocket.__init__(self, space,0,color)
 		
 		self.hull = RectShape(self.space,self.body, w,h, 10)
 		self.props = [RectShape(self.space,self.body, h/2,w/2, 1), RectShape(self.space,self.body, h/2,w/2, 1)]
 		
+		self.forceangle = [pi/2, pi/2]
 		self.forcepos = [(-3/4*w, -h/2),(3/4*w, -h/2)]
 		self.bottom = Vec2d(0, -h/2)
 		
-		for i in range(2) : self.props[i].shape.unsafe_set_vertices(
-			self.props[i].shape.get_vertices(),
-			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i])
-		)
+		self.set_color(self.color)
 
 class GUI : pass
 class LevelBar(GUI):
@@ -346,16 +346,37 @@ class LevelBar(GUI):
 		htmp  = self.l * h / self.maxl
 		pg.draw.rect(cam.screen, "cyan", [int(v) for v in [x-w/2, y+h/2-htmp, w, htmp]]) # color bar
 
+def init_menu(menu, ws):
+	rocket_label = pgui.elements.UITextBox( "Fusée n°", pg.Rect((5, 5), (-1, -1)))
+	in_rocket = pgui.elements.UITextEntryLine( pg.Rect((0, 5), (50, -1)), anchors={'left_target':rocket_label} )
+	
+	angle_label = pgui.elements.UITextBox( "Angle props.", pg.Rect((20, 5), (-1, -1)), anchors={'left_target':in_rocket} )	
+	in_angle = pgui.elements.UIHorizontalSlider( pg.Rect((0, 5), (200, 20)), 0, (0,pi/2), anchors={'left_target':angle_label} )
+	
+	col_label = pgui.elements.UITextBox( "Collisions", pg.Rect((20, 5), (-1, -1)), anchors={'left_target':in_angle} )
+	in_col = pgui.elements.UIDropDownMenu(['oui','non'], 'non', pg.Rect((0, 5), (60, 40)), anchors={'left_target':col_label} )
+	
+	perturb_label = pgui.elements.UITextBox( "Perturbations", pg.Rect((20, 5), (-1, -1)), anchors={'left_target':in_col})
+	in_perturb = pgui.elements.UITextEntryLine( pg.Rect((0, 5), (50, -1)), anchors={'left_target':perturb_label} )
+	
+	return Obj(
+		in_rocket=in_rocket,in_angle=in_angle,in_col=in_col,in_perturb=in_perturb
+	)
 def show_menu(menu, elements):
 	pass
 def hide_menu(menu, elements):
 	pass
 def events_menu(elements, event):
-	res = Obj(rind=None,angle=None)
+	res = Obj(rind=None,pangle=None,col=None,perturb=None)
 	
 	if event.type == pgui.UI_TEXT_ENTRY_FINISHED:
-		if   event.ui_element == elements.in_rocket : res.rind = int(event.text)
-		elif event.ui_element == elements.in_angle  : res.angle = float(event.text)
+		if   event.ui_element == elements.in_rocket  : res.rind = int(event.text)
+		elif event.ui_element == elements.in_perturb : res.perturb = int(event.text)
+		event.ui_element.unfocus()
+	elif event.type == pgui.UI_HORIZONTAL_SLIDER_MOVED:
+		if event.ui_element == elements.in_angle : res.pangle = event.value
+	elif event.type == pgui.UI_DROP_DOWN_MENU_CHANGED:
+		if event.ui_element == elements.in_col : res.col = True if event.text == 'oui' else False
 	
 	return res
 
@@ -396,15 +417,17 @@ class Controller_target_alix1(Controller_target):
 					fz.Rule(fz.AND(fsets_erra[i], fsets_vela[n]), fsets_fr[indR])
 				]
 		self.sys3 = fz.System(rules3)
-	
 	# must return (thrust left ; thrust right)
-	def action(self, err,vel,rangle,rvel):
+	def action(self, tpos, rpos,vel, rangle,rvel):
+		err = rpos - tpos
+		rangle += pi/2 # [0, 2pi] range
+		
 		fx = self.sys1.compute({'errx': err.x/5, 'velx': vel.x/5}, 'fx')
 		fy = self.sys2.compute({'erry': err.y*3, 'vely': vel.y/3}, 'fy')
 		
 		f1 = Vec2d(fx, fy) # force to target
 		f2 = Vec2d(cos(rangle), sin(rangle)) # rocket dir
-		f3 = Vec2d(0, 1) # vertical
+		f3 = Vec2d(0, 1) # vertical dir
 		
 		# which angle should rocket turn towards ?
 		ftot = f1.normalized() + f3.normalized()*4 # which is more important : staying vertical or going towards target ?
@@ -422,7 +445,7 @@ class Controller_target_alix1(Controller_target):
 class Controller_platform_alix1(Controller_platform):
 	def __init__(self):
 		self.c = Controller_target_alix1()
-	def action(self, rpos,vel,rangle,rvel, pos,w):
+	def action(self, pos,w, rpos,vel, rangle,rvel):
 		margin = 0.4
 		err = rpos - pos
 		
@@ -435,7 +458,188 @@ class Controller_platform_alix1(Controller_platform):
 				if err.x > 0   : target = pos + Vec2d(w/2 + margin, -margin)
 				elif err.x < 0 : target = pos + Vec2d(-w/2 - margin, -margin)
 		
-		return self.c.action(rpos-target,vel,rangle,rvel)
+		return self.c.action(target, rpos,vel, rangle,rvel)
+class Controller_target_audric_cloe1(Controller_platform):
+	def __init__(self):
+		THROTLE_MAX = 175
+
+		x_rules_gauche = [
+			[3, 2, 1, 1, 1],
+			[2, 1, 1, 1, 1],
+			[1, 1, 0, 0, 0],
+			[0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0]
+		]
+
+		x_rules_droit = [
+			[0, 0, 0, 0, 0],
+			[0, 0, 0, 0, 0],
+			[0, 0, 0, 1, 1],
+			[1, 1, 1, 2, 2],
+			[1, 1, 1, 2, 3]
+		]
+
+		theta_rules_gauche = [
+			[0, 0, 0, 0, 1],
+			[0, 0, 0, 0, 1],
+			[0, 0, 0, 1, 2],
+			[0, 0, 1, 1, 2],
+			[0, 1, 1, 2, 3]
+		]
+
+		theta_rules_droit = [
+			[3, 2, 1, 1, 0],
+			[2, 1, 1, 0, 0],
+			[2, 1, 0, 0, 0],
+			[1, 0, 0, 0, 0],
+			[1, 0, 0, 0, 0]
+		]
+
+		y_rules_gauche = [
+			[2, 2, 2, 2, 3],
+			[2, 2, 2, 2, 3],
+			[2, 2, 2, 2, 3],
+			[2, 2, 2, 2, 3],
+			[2, 2, 3, 3, 3]
+		]
+
+		y_rules_droit = y_rules_gauche
+
+		rule_sets = {
+			
+			'err_x': fz.SetTrig.autoN(5, -5, 5, True, 'err_x'),
+			'derr_x': fz.SetTrig.autoN(5, -15, 15, True, 'derr_x'),
+
+			'err_theta': fz.SetTrig.autoN(5, -pi/2, pi/2, True, 'err_theta'),
+			'derr_theta': fz.SetTrig.autoN(5, -pi, pi, True, 'derr_theta'),
+
+			'err_y': fz.SetTrig.autoN(5, -1, 1, True, 'err_y'),
+			'derr_y': fz.SetTrig.autoN(5, -10, 10, True, 'derr_y'),
+
+			'force_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_gauche'),
+			'force_droite': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_droite')
+		}
+
+		#X
+		f_rules_x_gauche = [ fz.Rule(fz.AND(rule_sets['err_x'][err_i],rule_sets['derr_x'][derr_i]), rule_sets['force_gauche'][x_rules_gauche[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.x_gauche = fz.System(f_rules_x_gauche)
+
+		f_rules_x_droit = [ fz.Rule(fz.AND(rule_sets['err_x'][err_i],rule_sets['derr_x'][derr_i]), rule_sets['force_droite'][x_rules_droit[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.x_droit = fz.System(f_rules_x_droit)
+
+		#Theta
+		f_rules_theta_gauche = [ fz.Rule(fz.AND(rule_sets['err_theta'][err_i],rule_sets['derr_theta'][derr_i]), rule_sets['force_gauche'][theta_rules_gauche[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.theta_gauche = fz.System(f_rules_theta_gauche)
+
+		f_rules_theta_droit = [ fz.Rule(fz.AND(rule_sets['err_theta'][err_i],rule_sets['derr_theta'][derr_i]), rule_sets['force_droite'][theta_rules_droit[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.theta_droit = fz.System(f_rules_theta_droit)
+
+		#Y
+		f_rules_y_gauche = [ fz.Rule(fz.AND(rule_sets['err_y'][err_i],rule_sets['derr_y'][derr_i]), rule_sets['force_gauche'][y_rules_gauche[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.y_gauche = fz.System(f_rules_y_gauche)
+
+		f_rules_y_droit = [ fz.Rule(fz.AND(rule_sets['err_y'][err_i],rule_sets['derr_y'][derr_i]), rule_sets['force_droite'][y_rules_droit[err_i][derr_i]]) for err_i in range(5) for derr_i in range(5) ]
+		self.y_droit = fz.System(f_rules_y_droit)
+
+
+
+		x_theta_rules_gauche = [
+			[0, 1, 2, 2],
+			[0, 1, 2, 3],
+			[1, 2, 2, 3],
+			[2, 3, 3, 3]
+		]
+
+		"""
+		x_theta_rules_droit = [
+			[3, 3, 2, 2],
+			[3, 2, 2, 1],
+			[2, 2, 1, 0],
+			[2, 1, 0, 0]
+		]
+		"""
+		x_theta_rules_droit = x_theta_rules_gauche
+
+		rule_sets_x_theta = {
+			'x_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'x_gauche'),
+			'theta_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'theta_gauche'),
+			
+			'x_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'x_droit'),
+			'theta_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'theta_droit'),
+
+			
+			'force_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_gauche'),
+			'force_droite': fz.SetTrig.autoN(4, 0, THROTLE_MAX, False, 'force_droite')
+		}
+
+		
+		f_rules_xtheta_gauche = [ fz.Rule(fz.AND(rule_sets_x_theta['x_gauche'][x_i],rule_sets_x_theta['theta_gauche'][theta_i]), rule_sets_x_theta['force_gauche'][x_theta_rules_gauche[x_i][theta_i]]) for x_i in range(4) for theta_i in range(4) ]
+		self.xtheta_gauche = fz.System(f_rules_xtheta_gauche)
+
+		f_rules_xtheta_droit = [ fz.Rule(fz.AND(rule_sets_x_theta['x_droit'][x_i],rule_sets_x_theta['theta_droit'][theta_i]), rule_sets_x_theta['force_droite'][x_theta_rules_droit[x_i][theta_i]]) for x_i in range(4) for theta_i in range(4) ]
+		self.xtheta_droit = fz.System(f_rules_xtheta_droit)
+
+
+		xtheta_y_rules_gauche = [
+			[1, 2, 2, 3],
+			[2, 2, 3, 4],
+			[3, 4, 4, 5],
+			[4, 4, 5, 6]
+		]
+
+		xtheta_y_rules_droit = xtheta_y_rules_gauche
+
+		rule_sets_xtheta_y = {
+			'xtheta_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'xtheta_gauche'),
+			'y_gauche': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'y_gauche'),
+			
+			'xtheta_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'xtheta_droit'),
+			'y_droit': fz.SetTrig.autoN(4, 0, THROTLE_MAX, True, 'y_droit'),
+
+			
+			'force_gauche': fz.SetTrig.autoN(7, 0, THROTLE_MAX, False, 'force_gauche'),
+			'force_droite': fz.SetTrig.autoN(7, 0, THROTLE_MAX, False, 'force_droite')
+		}
+
+		f_rules_gauche = [ fz.Rule(fz.AND(rule_sets_xtheta_y['xtheta_gauche'][xtheta_i],rule_sets_xtheta_y['y_gauche'][y_i]), rule_sets_xtheta_y['force_gauche'][xtheta_y_rules_gauche[xtheta_i][y_i]]) for xtheta_i in range(4) for y_i in range(4) ]
+		self.gauche = fz.System(f_rules_gauche)
+
+		f_rules_droit = [ fz.Rule(fz.AND(rule_sets_xtheta_y['xtheta_droit'][xtheta_i],rule_sets_xtheta_y['y_droit'][y_i]), rule_sets_xtheta_y['force_droite'][xtheta_y_rules_droit[xtheta_i][y_i]]) for xtheta_i in range(4) for y_i in range(4) ]
+		self.droit = fz.System(f_rules_droit)
+
+	def action(self, tpos, rpos, vel, theta, dtheta):
+		x = rpos.x - tpos.x ; y = rpos.y - tpos.y
+		dx = vel.x ; dy = vel.y
+		
+		theta = theta % (2*pi)
+		if(theta > pi): theta = theta - 2*pi
+		y = -y
+
+		x_gauche = self.x_gauche.compute({'err_x': x, 'derr_x': dx}, tag = 'force_gauche') * 1.25
+		x_droit = self.x_droit.compute({'err_x': x, 'derr_x': dx}, tag = 'force_droite') * 1.25
+		
+		theta_gauche = self.theta_gauche.compute({'err_theta': theta, 'derr_theta': dtheta}, tag = 'force_gauche')
+		theta_droit = self.theta_droit.compute({'err_theta': theta, 'derr_theta': dtheta}, tag = 'force_droite')
+		
+		y_gauche = self.y_gauche.compute({'err_y': y, 'derr_y': dy}, tag = 'force_gauche') * 0.75
+		y_droit = self.y_droit.compute({'err_y': y, 'derr_y': dy}, tag = 'force_droite') * 0.75
+		
+		xtheta_gauche = self.xtheta_gauche.compute({'x_gauche': x_gauche, 'theta_gauche': theta_gauche}, tag = 'force_gauche') * 1.25
+		xtheta_droit = self.xtheta_droit.compute({'x_droit': x_droit, 'theta_droit': theta_droit}, tag = 'force_droite') * 1.25
+		
+		force_gauche = self.gauche.compute({'xtheta_gauche': xtheta_gauche, 'y_gauche': y_gauche}, tag = 'force_gauche')
+		force_droite = self.droit.compute({'xtheta_droit': xtheta_droit, 'y_droit': y_droit}, tag = 'force_droite')
+		
+		if(theta > pi / 2): force_droite = 0
+		if(theta < -pi / 2): force_gauche = 0
+
+		return (force_gauche, force_droite)
+
+def toggle_rockets_col(rockets, b): # enable / disable collisions between rockets
+	val = 0 if b else 1
+	for rocket in rockets:
+		rocket.hull.shape.filter = pymunk.ShapeFilter(group=val)
+		for prop in rocket.props : prop.shape.filter = pymunk.ShapeFilter(group=val)
 
 # graphics + physics loop (interactive)
 def main_manual():
@@ -455,27 +659,31 @@ def main_manual():
 	maincam = Camera(Vec2d(0,0), screen, pxPerM, offscreen)
 	# minimap
 	mms = (ws[0]/5, ws[1]/5)
-	minimap = pg.Surface(mms)
+	minimap = pg.Surface(mms, pg.SRCALPHA)
 	mmcam = Camera(Vec2d(0,0), minimap, pxPerM/40) # minimap camera
 	# -----------------------------------------------------------------------------------------------------------
 	
-	# Physics init ----------------------------------------------------------------------------------------------
+	# World init ----------------------------------------------------------------------------------------------
 	space = pymunk.Space()
 	space.gravity = (0.0, -9.81)
+	perturbations = 50 # random thruster perturbations
 	
-	controllers_alix = {
+	controllers_1 = {
 		Target: Controller_target_alix1(),
 		Platform: Controller_platform_alix1()
 	}
+	controllers_2 = {
+		Target: Controller_target_audric_cloe1(),
+		Platform: Controller_platform_alix1()
+	}
 	rockets = [
-		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix), 
-		Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix)
+		Rocket_fancy(space, angle=pi/8, color=['red','blue','yellow','green'][i]).set_pos(Vec2d(2+i/10,5)).set_controllers(controllers_1)
+		#Rocket_fancy(space, pi/8, 'blue').set_pos(Vec2d(2,5)).set_controllers(controllers_2)
+		for i in range(4)
 	]
 	rind = 0 # focused rocket index
 	# disable inter-rockets collisions
-	for rocket in rockets:
-		rocket.hull.shape.filter = pymunk.ShapeFilter(group=1)
-		for prop in rocket.props : prop.shape.filter = pymunk.ShapeFilter(group=1)
+	toggle_rockets_col(rockets, False)
 	
 	waypoints = [(2,0),(8,8),(-5, -10)]
 	goals = [
@@ -496,29 +704,23 @@ def main_manual():
 	# GUI init --------------------------------------------------------------------------------------------------
 	# lateral bars
 	thrustbars = [
-		LevelBar(5/100,50/100, 5/100,50/100, 300), # left
-		LevelBar(5/100,50/100, 95/100,50/100, 300) # right
+		LevelBar(2/100,50/100, 3/100,50/100, 300), # left
+		LevelBar(2/100,50/100, 97/100,50/100, 300) # right
 	]
 	guiObjects = [*thrustbars]
 	
 	# menu
 	mW = 0.5 * ws[0] ; mH = 0.9 * ws[1]
-	menu = pgui.UIManager(ws)
-	rocket_label = pgui.elements.UILabel( relative_rect=pg.Rect((ws[0]/2, 20), (100, 50)), text="Fusée sélectionnée" )
-	in_rocket = pgui.elements.UITextEntryLine( relative_rect=pg.Rect((20, 20), (100, 50)), initial_text=str(rind), anchors={'left_target':rocket_label} )
-	angle_label = pgui.elements.UILabel( relative_rect=pg.Rect((ws[0]/2, 20), (150, 50)), text="Angle des propulseurs", anchors={'top_target':rocket_label} )
-	in_angle = pgui.elements.UITextEntryLine( relative_rect=pg.Rect((20, 20), (100, 50)), initial_text=str(rind), anchors={'left_target':angle_label,'top_target':in_rocket} )
-	m_elements = Obj(
-		in_rocket = in_rocket,
-		in_angle = in_angle,
-	)
+	menu = pgui.UIManager(ws, "res/textbox.json")
+	m_elements = init_menu(menu, ws)
 	# ----------------------------------------------------------------------------------------------------------
 	
 	while True:
 		dt = clock.tick(fps)
 		
 		# physics
-		rocket.apply_damping(2, 2)
+		for rocket in rockets : rocket.apply_perturbation(perturbations) # random perturbations to thrusters
+		for rocket in rockets : rocket.apply_damping(2, 2)
 		space.step(1/fps)
 		for rocket in rockets : rocket.refresh_applied_f()
 		
@@ -536,13 +738,18 @@ def main_manual():
 				elif event.key == pg.K_i : maincam.r *= 120/100 # zoom in
 				elif event.key == pg.K_o : maincam.r *= 80/100 # zoom out
 			
-			events_menu(m_elements, event)
+			user_in = events_menu(m_elements, event)
 			menu.process_events(event)
 		# get key downs (repeats)
 		keys = pg.key.get_pressed()
-		if keys[pg.K_ESCAPE] : sys.exit(0)
 		if keys[pg.K_LEFT]   : rockets[rind].apply_force(100,0)
 		if keys[pg.K_RIGHT]  : rockets[rind].apply_force(0,100)
+		
+		# process GUI user inputs
+		if user_in.rind is not None : rind = user_in.rind
+		if user_in.pangle is not None : rockets[rind].orient_props(user_in.pangle)
+		if user_in.col is not None : toggle_rockets_col(rockets, user_in.col)
+		if user_in.perturb is not None : perturbations = user_in.perturb
 		
 		# controller
 		for rocket in rockets:
@@ -559,7 +766,7 @@ def main_manual():
 		for i in [0,1] : thrustbars[i].l = applied_f[i].length
 		
 		# minimap
-		minimap.fill((128,128,128))
+		minimap.fill((128,128,128, 200))
 		for obj in physObjects : obj.drawmini(mmcam)
 		screen.blit(minimap, (10,ws[1]-(mms[1]+10))) 
 		
@@ -636,6 +843,3 @@ if __name__ == '__main__':
     sys.exit(main_manual())
 
 
-# TODO : 
-# - integrer les codes (controlleur de audric)
-# - finir menu

@@ -1,0 +1,13 @@
+{
+	"text_box": {
+	    "colours": {
+			"dark_bg":"rgba(0,0,0,0)",
+			"normal_text": "black"
+	    },
+
+	    "misc": {
+		   "border_width": "0",
+		   "shadow_width": "0"
+	    }
+	}
+ }
