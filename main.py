@@ -1,7 +1,11 @@
 import pymunk
 from pymunk.vec2d import Vec2d
 from pymunk.transform import Transform
-import pygame
+I = pymunk.Transform.identity
+
+import pygame as pg
+import pygame_gui as pgui
+
 import matplotlib.pyplot as plt
 
 import sys
@@ -10,6 +14,7 @@ pi = math.pi ; cos = math.cos ; sin = math.sin
 from copy import deepcopy as dcp
 import random
 from time import time
+import os
 
 import fuzzy as fz
 
@@ -17,15 +22,20 @@ import fuzzy as fz
 Obj = lambda **kwargs: type("Object", (), kwargs)()
 
 class Camera:
-	def __init__(self, pos, screen, ratio):
+	def __init__(self, pos, screen, ratio, offscreen=None):
 		self.screen = screen
+		self.offscreen = offscreen
 		self.r = ratio # pxPerM
 		self.sz = Vec2d(*screen.get_size()) # px size
 		self.pos = pos
 	def conv_coord(self, coord): # convert from physics coord to this camera's screen coord
 		tmp = (-self.pos*self.r + self.sz/2) + coord*self.r
 		return (int(tmp[0]), int(-tmp[1] + self.sz.y))
-
+	def flip_screen(self):
+		tmp = self.screen
+		self.screen = self.offscreen
+		self.offscreen = tmp
+	
 class Shape:
 	def set_pos(self, pos):
 		self.shape.body.position = pos
@@ -42,7 +52,7 @@ class CircleShape(Shape):
 		space.add(self.shape)
 	def draw(self, cam):
 		pos = self.shape.offset.rotated(self.shape.body.angle) + self.shape.body.position
-		pygame.draw.circle(cam.screen, self.color, cam.conv_coord(pos), int(cam.r*self.shape.radius))
+		pg.draw.circle(cam.screen, self.color, cam.conv_coord(pos), int(cam.r*self.shape.radius))
 class PolyShape(Shape):
 	def __init__(self, space,body, pnts, m):
 		self.shape = pymunk.Poly(body, pnts)
@@ -52,12 +62,12 @@ class PolyShape(Shape):
 		self.color = 'blue'
 		
 		space.add(self.shape)
-	def draw(self, cam):
+	def draw(self, cam, transfo=I()):
 		pnts = []
 		for v in self.shape.get_vertices():
-			pos = v.rotated(self.shape.body.angle) + self.shape.body.position
+			pos = (transfo @ v).rotated(self.shape.body.angle) + self.shape.body.position
 			pnts.append(cam.conv_coord(pos))
-		pygame.draw.polygon(cam.screen, self.color, pnts)
+		pg.draw.polygon(cam.screen, self.color, pnts)
 class RectShape(PolyShape):
 	def __init__(self, space,body, w,h, m):
 		pnts = [(-w/2,-h/2),(-w/2,h/2),(w/2,h/2),(w/2,-h/2)]
@@ -83,9 +93,9 @@ class Ground:
 		space.add(*self.segments)
 	
 	def draw(self, cam):
-		pygame.draw.lines(cam.screen, self.color, False, [cam.conv_coord(pnt) for pnt in self.pnts], int(pxPerM*self.thick*2))
+		pg.draw.lines(cam.screen, self.color, False, [cam.conv_coord(pnt) for pnt in self.pnts], int(pxPerM*self.thick*2))
 	def drawmini(self, cam):
-		pygame.draw.lines(cam.screen, self.color, False, [cam.conv_coord(pnt) for pnt in self.pnts], 3)
+		pg.draw.lines(cam.screen, self.color, False, [cam.conv_coord(pnt) for pnt in self.pnts], 3)
 
 class Goal : pass
 class Target(Goal):
@@ -94,10 +104,10 @@ class Target(Goal):
 		self.r = r
 		self.dt = dt
 	def draw(self, cam):
-		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(0.1*cam.r))
-		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), max(1,int(0.05*cam.r)))
+		pg.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(0.1*cam.r))
+		pg.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), int(self.r*cam.r), max(1,int(0.05*cam.r)))
 	def drawmini(self, cam):
-		pygame.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
+		pg.draw.circle(cam.screen, "red", cam.conv_coord(self.pos), 4)
 class Platform(Goal, Ground):
 	def __init__(self, space, pos, w, dt):
 		Ground.__init__(self, space, [pos-Vec2d(w/2,0), pos+Vec2d(w/2,0)])
@@ -149,6 +159,10 @@ class Rocket:
 	def get_rotvel(self):
 		return self.body.angular_velocity
 	
+	def set_color(self, color):
+		self.hull.color = color
+		for prop in self.props : prop.color = color
+	
 	def apply_damping(self, lin,rot):
 		self.body.apply_force_at_world_point(-self.body.velocity*lin, self.body.position)
 		# torque
@@ -174,6 +188,11 @@ class Rocket:
 		self.set_linvel(Vec2d(0,0))
 		self.set_rotvel(0)
 		return self
+	
+	def reset(self):
+		self.stop()
+		self.refresh_applied_f()
+		self.set_goals(self.goals)
 	
 	def set_goals(self, goals):
 		self.goals = goals
@@ -229,24 +248,26 @@ class Rocket:
 	def draw_arrow(self, cam, p, color):
 		pos0 = self.body.position
 		pos1 = p + pos0
-		pygame.draw.line(cam.screen, color, cam.conv_coord(pos0), cam.conv_coord(pos1), 3)
-	def draw(self, cam):
-		self.hull.draw(cam)
-		for prop in self.props : prop.draw(cam)
+		pg.draw.line(cam.screen, color, cam.conv_coord(pos0), cam.conv_coord(pos1), 3)
+	def draw(self, cam, transfo1=I(),transfo2=I()):
+		self.hull.draw(cam, transfo1)
+		for prop in self.props : prop.draw(cam, transfo2)
 	def drawmini(self, cam): # for minimap : display as triangle
 		pos = Vec2d(*cam.conv_coord(self.body.position))
 		h = 12 ; w = 6
 		t = Transform.rotation(-self.get_angle())
 		pnts = [pos + t @ Vec2d(*pnt) for pnt in [(0,-h/2),(-w/2,h/2),(w/2,h/2)]]
-		pygame.draw.polygon(cam.screen, "green", pnts)
+		pg.draw.polygon(cam.screen, "green", pnts)
 class Rocket_fancy(Rocket):
 	def __init__(self, *args, **kwargs):
 		Rocket.__init__(self, *args, **kwargs)
 		
-		self.hull = PolyShape(self.space,self.body, [(-0.25,0.),(-0.1875,0.25),(0.,0.5),(0.1875,0.25),(0.25,0.),(0.25,-0.5),(-0.25,-0.5)], 10)
+		hullpnts = [(-0.25,0.),(-0.1875,0.25),(0.,0.5),(0.1875,0.25),(0.25,0.),(0.25,-0.5),(-0.25,-0.5)]
+		proppnts = [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)]
+		self.hull = PolyShape(self.space,self.body, hullpnts, 10)
 		self.props = [
-			PolyShape(self.space,self.body, [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)], 1), 
-			PolyShape(self.space,self.body, [(-0.125,0.0625),(-0.0625,0.125),(0.0625,0.125),(0.125,0.0625),(0.0625,-0.125),(-0.0625,-0.125)], 1)
+			PolyShape(self.space,self.body, proppnts, 1), 
+			PolyShape(self.space,self.body, proppnts, 1)
 		]
 		
 		self.forcepos = [(-0.25, -0.5),(0.25, -0.5)]
@@ -256,6 +277,42 @@ class Rocket_fancy(Rocket):
 			self.props[i].shape.get_vertices(),
 			pymunk.Transform.translation(*self.forcepos[i]).rotated(self.forceangle[i] -pi/2)
 		)
+		
+		self.tex = pg.image.load(os.path.join('res', 'rocket2.png')).convert_alpha()
+	def draw(self, cam):
+		
+		# texture support
+		if cam.offscreen is not None:
+			
+			# draw outline
+			self.set_color('red')
+			Rocket.draw(self, cam)
+			
+			# draw mask
+			self.hull.color = 'white'
+			cam.offscreen.fill((0,0,0, 0))
+			cam.flip_screen()
+			self.hull.draw(cam)
+			cam.flip_screen()
+			
+			# blit texture
+			sz = cam.r*1.5
+			surf = pg.transform.scale(self.tex, (sz,sz))
+			surf = pg.transform.rotate(surf, self.get_angle()*180/pi)
+			r = surf.get_rect()
+			
+			cam.offscreen.blit(surf, cam.conv_coord(self.get_pos()+Vec2d(-r.w/2,r.h/2)/cam.r), None, pg.BLEND_RGBA_MULT)
+			cam.screen.blit(cam.offscreen, (0,0))
+			
+			# draw red thrusters
+			for prop in self.props:
+				prop.color = 'red'
+				prop.draw(cam)
+		
+		# no texture
+		else:
+			self.set_color('blue')
+			Rocket.draw(self, cam)
 class Rocket_basic(Rocket):
 	def __init__(self, w,h, *args, **kwargs):
 		Rocket.__init__(self, *args, **kwargs)
@@ -279,16 +336,28 @@ class LevelBar(GUI):
 		
 		self.maxl = maxl
 		self.l = 0
-	
 	def draw(self, cam):
 		x,w = [self.x*cam.sz[0], self.w*cam.sz[0]]
 		y,h = [self.y*cam.sz[1], self.h*cam.sz[1]]
 		bgsz = 10 # px
 		wbg,hbg = [w+bgsz, h+bgsz]
-		pygame.draw.rect(cam.screen, "black", [int(v) for v in [x-wbg/2, y-hbg/2, wbg, hbg]]) # bg
+		pg.draw.rect(cam.screen, "black", [int(v) for v in [x-wbg/2, y-hbg/2, wbg, hbg]]) # bg
 		# modify full height depending on level
 		htmp  = self.l * h / self.maxl
-		pygame.draw.rect(cam.screen, "cyan", [int(v) for v in [x-w/2, y+h/2-htmp, w, htmp]]) # color bar
+		pg.draw.rect(cam.screen, "cyan", [int(v) for v in [x-w/2, y+h/2-htmp, w, htmp]]) # color bar
+
+def show_menu(menu, elements):
+	pass
+def hide_menu(menu, elements):
+	pass
+def events_menu(elements, event):
+	res = Obj(rind=None,angle=None)
+	
+	if event.type == pgui.UI_TEXT_ENTRY_FINISHED:
+		if   event.ui_element == elements.in_rocket : res.rind = int(event.text)
+		elif event.ui_element == elements.in_angle  : res.angle = float(event.text)
+	
+	return res
 
 # Fuzzy controllers
 class Controller_target : pass
@@ -372,6 +441,24 @@ class Controller_platform_alix1(Controller_platform):
 def main_manual():
 	global pxPerM
 	
+	# Graphics init -------------------------------------------------------------------------------------------
+	pg.init()
+	# main window
+	ws = (1000, 600) # screen dimensions in pixels
+	pxPerM = 100 # px/m
+	screen = pg.display.set_mode(ws)
+	offscreen = pg.Surface(ws, pg.SRCALPHA) # for texture rendering
+	pg.display.set_caption("Rocket control")
+	clock = pg.time.Clock()
+	keysdown = {}
+	fps = 60
+	maincam = Camera(Vec2d(0,0), screen, pxPerM, offscreen)
+	# minimap
+	mms = (ws[0]/5, ws[1]/5)
+	minimap = pg.Surface(mms)
+	mmcam = Camera(Vec2d(0,0), minimap, pxPerM/40) # minimap camera
+	# -----------------------------------------------------------------------------------------------------------
+	
 	# Physics init ----------------------------------------------------------------------------------------------
 	space = pymunk.Space()
 	space.gravity = (0.0, -9.81)
@@ -381,11 +468,14 @@ def main_manual():
 		Platform: Controller_platform_alix1()
 	}
 	rockets = [
-		Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix),
-		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix)
+		Rocket_fancy(space, pi/8).set_pos(Vec2d(2,5)).set_controllers(controllers_alix), 
+		Rocket_basic(0.5,1, space, 0).set_pos(Vec2d(0,5)).set_controllers(controllers_alix)
 	]
 	rind = 0 # focused rocket index
-	#j = pymunk.PivotJoint(space.static_body, rocket.body, rocket.get_pos()) ; space.add(j) # pin rocket
+	# disable inter-rockets collisions
+	for rocket in rockets:
+		rocket.hull.shape.filter = pymunk.ShapeFilter(group=1)
+		for prop in rocket.props : prop.shape.filter = pymunk.ShapeFilter(group=1)
 	
 	waypoints = [(2,0),(8,8),(-5, -10)]
 	goals = [
@@ -403,30 +493,30 @@ def main_manual():
 	physObjects = [*grounds, *goals, *rockets]
 	# -----------------------------------------------------------------------------------------------------------
 	
-	# Graphics init -------------------------------------------------------------------------------------------
-	ws = (1000, 600) # screen dimensions in pixels
-	pxPerM = 100 # px/m
-	pygame.init()
-	screen = pygame.display.set_mode(ws)
-	pygame.display.set_caption("Rocket control")
-	clock = pygame.time.Clock()
-	keysdown = {}
-	fps = 60
-	maincam = Camera(Vec2d(0,0), screen, pxPerM)
-	
-	mms = (ws[0]/5, ws[1]/5)
-	minimap = pygame.Surface(mms)
-	mmcam = Camera(Vec2d(0,0), minimap, pxPerM/40) # minimap camera
-	#minimap.set_alpha(128)
-	
+	# GUI init --------------------------------------------------------------------------------------------------
+	# lateral bars
 	thrustbars = [
 		LevelBar(5/100,50/100, 5/100,50/100, 300), # left
 		LevelBar(5/100,50/100, 95/100,50/100, 300) # right
 	]
 	guiObjects = [*thrustbars]
+	
+	# menu
+	mW = 0.5 * ws[0] ; mH = 0.9 * ws[1]
+	menu = pgui.UIManager(ws)
+	rocket_label = pgui.elements.UILabel( relative_rect=pg.Rect((ws[0]/2, 20), (100, 50)), text="Fusée sélectionnée" )
+	in_rocket = pgui.elements.UITextEntryLine( relative_rect=pg.Rect((20, 20), (100, 50)), initial_text=str(rind), anchors={'left_target':rocket_label} )
+	angle_label = pgui.elements.UILabel( relative_rect=pg.Rect((ws[0]/2, 20), (150, 50)), text="Angle des propulseurs", anchors={'top_target':rocket_label} )
+	in_angle = pgui.elements.UITextEntryLine( relative_rect=pg.Rect((20, 20), (100, 50)), initial_text=str(rind), anchors={'left_target':angle_label,'top_target':in_rocket} )
+	m_elements = Obj(
+		in_rocket = in_rocket,
+		in_angle = in_angle,
+	)
 	# ----------------------------------------------------------------------------------------------------------
 	
 	while True:
+		dt = clock.tick(fps)
+		
 		# physics
 		rocket.apply_damping(2, 2)
 		space.step(1/fps)
@@ -435,42 +525,49 @@ def main_manual():
 		rpos = rockets[rind].get_pos()
 		
 		# user events
-		for event in pygame.event.get():
-			if event.type == pygame.QUIT : sys.exit(0)
+		for event in pg.event.get():
+			if event.type == pg.QUIT : sys.exit(0)
 			
 			# get key events (no repeats)
-			elif event.type == pygame.KEYDOWN:
-				if   event.key == pygame.K_r : rockets[rind].set_pos(Vec2d(5,5)).stop() # reset rocket
-				elif event.key == pygame.K_a : rockets[rind].auto = not rockets[rind].auto # toggle auto control
-				elif event.key == pygame.K_i : maincam.r *= 120/100 # zoom in
-				elif event.key == pygame.K_o : maincam.r *= 80/100 # zoom out
+			elif event.type == pg.KEYDOWN:
+				if   event.key == pg.K_r: # reset all rockets
+					for rocket in rockets : rocket.reset()
+				elif event.key == pg.K_a : rockets[rind].auto = not rockets[rind].auto # toggle auto control
+				elif event.key == pg.K_i : maincam.r *= 120/100 # zoom in
+				elif event.key == pg.K_o : maincam.r *= 80/100 # zoom out
+			
+			events_menu(m_elements, event)
+			menu.process_events(event)
 		# get key downs (repeats)
-		keys = pygame.key.get_pressed()
-		if keys[pygame.K_ESCAPE] : sys.exit(0)
-		if keys[pygame.K_LEFT]   : rockets[rind].apply_force(100,0)
-		if keys[pygame.K_RIGHT]  : rockets[rind].apply_force(0,100)
+		keys = pg.key.get_pressed()
+		if keys[pg.K_ESCAPE] : sys.exit(0)
+		if keys[pg.K_LEFT]   : rockets[rind].apply_force(100,0)
+		if keys[pg.K_RIGHT]  : rockets[rind].apply_force(0,100)
 		
 		# controller
 		for rocket in rockets:
 			rocket.update_goal(time())
 			rocket.apply_control()
 		
-		# graphics
+		# main screen
 		screen.fill((255,255,255))
-		
-		applied_f = rockets[rind].applied_f
-		for i in [0,1] : thrustbars[i].l = applied_f[i].length
-		
 		maincam.pos = rpos
 		for obj in physObjects+guiObjects : obj.draw(maincam)
+		
+		# level bars
+		applied_f = rockets[rind].applied_f
+		for i in [0,1] : thrustbars[i].l = applied_f[i].length
 		
 		# minimap
 		minimap.fill((128,128,128))
 		for obj in physObjects : obj.drawmini(mmcam)
 		screen.blit(minimap, (10,ws[1]-(mms[1]+10))) 
 		
-		pygame.display.flip()
-		clock.tick(fps)
+		# menu
+		menu.update(dt)
+		menu.draw_ui(screen)
+		
+		pg.display.flip()
 # physics loop (non-interactive, for training)
 def main_training_all():
 	space = pymunk.Space()
@@ -537,3 +634,8 @@ def main_training_all():
 
 if __name__ == '__main__':
     sys.exit(main_manual())
+
+
+# TODO : 
+# - integrer les codes (controlleur de audric)
+# - finir menu
